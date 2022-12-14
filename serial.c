@@ -34,6 +34,8 @@ int serial_open(char *devname, char *baudrate_string)
     int rv = 0;
     struct termios t;
 
+    serial_close();
+
     speed_t baudrate = string_to_baudrate(baudrate_string);
     if (baudrate == B0) {
         fprintf(stderr, "Wrong serial port speed: %s\n", baudrate_string);
@@ -76,6 +78,14 @@ end:
     return rv;
 }
 
+void serial_close()
+{
+    if (fd >= 0) {
+        close(fd);
+        fd = -1;
+    }
+}
+
 int serial_write(unsigned char *buf, size_t len)
 {
     unsigned char *pos;
@@ -95,6 +105,7 @@ int serial_write(unsigned char *buf, size_t len)
             bytes_remaining -= bytes_written;
         } else if (bytes_written < 0 && bytes_written != -EINTR) {
             fprintf(stderr, "Serial port write error\n");
+            serial_close();
             return bytes_written;
         }
     }
@@ -125,6 +136,8 @@ again:
         }
     } else if(bytes_read == -EINTR) {
         goto again;
+    } else if(bytes_read < 0) {
+        serial_close();
     }
 
     return bytes_read;
