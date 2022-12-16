@@ -72,12 +72,10 @@ static size_t hdlc_encode(unsigned char *frame_buf, unsigned char *pkt, size_t p
     if (crc8 == HDLC_FLAG_BYTE || crc8 == HDLC_ESC_BYTE) {
         *frame_pos = HDLC_ESC_BYTE;
         frame_pos++;
-        *frame_pos = crc8 ^ HDLC_ESC_MASK;
-        frame_pos++;
-    } else {
-        *frame_pos = crc8;
-        frame_pos++;
+        crc8 ^= HDLC_ESC_MASK;
     }
+    *frame_pos = crc8;
+    frame_pos++;
 
     *frame_pos = HDLC_FLAG_BYTE;
     frame_pos++;
