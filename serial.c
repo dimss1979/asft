@@ -4,10 +4,29 @@
 #include <errno.h>
 #include <string.h>
 #include <sys/file.h>
+#include <stdlib.h>
+#include <stdbool.h>
 
 #include "serial.h"
 
-int fd = -ENOENT;
+#define HDLC_FLAG_BYTE 0x7e
+#define HDLC_ESC_BYTE  0x7d
+#define HDLC_ESC_MASK  0x20
+
+static int fd = -ENOENT;
+static size_t pkt_len_max = 0;
+static size_t frame_len_max = 0;
+static unsigned char *pkt_rx_buf = NULL;
+static unsigned char *frame_tx_buf = NULL;
+static int bytes_read = 0;
+static size_t bytes_remaining = 0;
+static size_t pkt_len = 0;
+static unsigned char crc8_local = 0;
+static enum {
+    HDLC_IDLE,
+    HDLC_NORM,
+    HDLC_ESC
+} hdlc_state = HDLC_IDLE;
 
 static struct {
     char    *br_string;
@@ -29,12 +48,66 @@ static speed_t string_to_baudrate(char *baudrate_string)
     return B0;
 }
 
-int serial_open(char *devname, char *baudrate_string)
+static size_t hdlc_encode(unsigned char *frame_buf, unsigned char *pkt, size_t pkt_len)
+{
+    unsigned int i;
+    unsigned char *frame_pos = frame_buf;
+    unsigned char crc8 = 0;
+
+    *frame_pos = HDLC_FLAG_BYTE;
+    frame_pos++;
+
+    for (i = 0; i < pkt_len; i++) {
+        unsigned char c = pkt[i];
+        crc8 += c;
+        if (c == HDLC_FLAG_BYTE || c == HDLC_ESC_BYTE) {
+            *frame_pos = HDLC_ESC_BYTE;
+            frame_pos++;
+            c ^= HDLC_ESC_MASK;
+        }
+        *frame_pos = c;
+        frame_pos++;
+    }
+
+    if (crc8 == HDLC_FLAG_BYTE || crc8 == HDLC_ESC_BYTE) {
+        *frame_pos = HDLC_ESC_BYTE;
+        frame_pos++;
+        *frame_pos = crc8 ^ HDLC_ESC_MASK;
+        frame_pos++;
+    } else {
+        *frame_pos = crc8;
+        frame_pos++;
+    }
+
+    *frame_pos = HDLC_FLAG_BYTE;
+    frame_pos++;
+
+    return frame_pos - frame_buf;
+}
+
+int serial_open(char *devname, char *baudrate_string, size_t _pkt_len_max)
 {
     int rv = 0;
     struct termios t;
 
     serial_close();
+
+    pkt_len_max = _pkt_len_max;
+    frame_len_max = 2 * pkt_len_max /* Worst case data */ + 2 /* Flag */ + 2 /* Worst case CRC8 */;
+
+    pkt_rx_buf = malloc(pkt_len_max + 1 /* CRC8 */);
+    if (!pkt_rx_buf) {
+        fprintf(stderr, "Input packet buffer allocation failed\n");
+        rv = -EINVAL;
+        goto end;
+    }
+
+    frame_tx_buf = malloc(frame_len_max);
+    if (!frame_tx_buf) {
+        fprintf(stderr, "Output frame buffer allocation failed\n");
+        rv = -EINVAL;
+        goto end;
+    }
 
     speed_t baudrate = string_to_baudrate(baudrate_string);
     if (baudrate == B0) {
@@ -66,14 +139,15 @@ int serial_open(char *devname, char *baudrate_string)
     t.c_cflag &= ~CRTSCTS;
     if (tcsetattr(fd, TCSANOW, &t) != 0) {
         fprintf(stderr, "Cannot set serial port attributes\n");
-        close(fd);
-        fd = -1;
         rv = -EINVAL;
         goto end;
     }
     tcflush(fd, TCIOFLUSH);
 
 end:
+
+    if (rv)
+        serial_close();
 
     return rv;
 }
@@ -82,12 +156,28 @@ void serial_close()
 {
     if (fd >= 0) {
         close(fd);
-        fd = -1;
+        fd = -ENOENT;
     }
+    if (pkt_rx_buf) {
+        free(pkt_rx_buf);
+        pkt_rx_buf = NULL;
+    }
+    if (frame_tx_buf) {
+        free(frame_tx_buf);
+        frame_tx_buf = NULL;
+    }
+    pkt_len_max = 0;
+    frame_len_max = 0;
+    bytes_read = 0;
+    bytes_remaining = 0;
+    pkt_len = 0;
+    crc8_local = 0;
+    hdlc_state = HDLC_IDLE;
 }
 
-int serial_write(unsigned char *buf, size_t len)
+int serial_write(unsigned char *pkt, size_t pkt_len)
 {
+    size_t frame_len;
     unsigned char *pos;
     int bytes_written;
     size_t bytes_remaining;
@@ -96,8 +186,14 @@ int serial_write(unsigned char *buf, size_t len)
         return -EIO;
     }
 
-    pos = buf;
-    bytes_remaining = len;
+    if (pkt_len > pkt_len_max) {
+        return -EINVAL;
+    }
+
+    frame_len = hdlc_encode(frame_tx_buf, pkt, pkt_len);
+
+    pos = frame_tx_buf;
+    bytes_remaining = frame_len;
     while (bytes_remaining) {
         bytes_written = write(fd, pos, bytes_remaining);
         if (bytes_written > 0) {
@@ -110,13 +206,14 @@ int serial_write(unsigned char *buf, size_t len)
         }
     }
 
-    return len;
+    return pkt_len;
 }
 
 int serial_read(unsigned char **buf_ptr, size_t *len_ptr)
 {
-    int bytes_read;
-    unsigned char read_buf[100];
+    bool had_read = false;
+    int rv = 0;
+    static unsigned char read_buf[100];
 
     *buf_ptr = NULL;
     *len_ptr = 0;
@@ -125,20 +222,84 @@ int serial_read(unsigned char **buf_ptr, size_t *len_ptr)
         return -EIO;
     }
 
+    if (bytes_remaining) {
+        goto process_buf;
+    }
+
 again:
 
+    had_read = true;
     bytes_read = read(fd, read_buf, sizeof(read_buf));
-    printf("Read %i bytes\n", bytes_read);
-    if (bytes_read > 0) {
-        // TODO Process received bytes
-        if (bytes_read < sizeof(read_buf) /* TODO && not full frame ^^^ */) {
-            usleep(20000); // TODO tune
-        }
-    } else if(bytes_read == -EINTR) {
+    if(bytes_read == -EINTR) {
         goto again;
     } else if(bytes_read < 0) {
         serial_close();
+        rv = bytes_read;
+        goto end;
+    }
+    bytes_remaining = bytes_read;
+
+process_buf:
+
+    while (bytes_remaining) {
+        unsigned char c = read_buf[bytes_read - bytes_remaining];
+        bytes_remaining--;
+
+        if (c == HDLC_FLAG_BYTE && hdlc_state == HDLC_IDLE) {
+            hdlc_state = HDLC_NORM;
+            pkt_len = 0;
+            crc8_local = 0;
+        } else if (c == HDLC_FLAG_BYTE && hdlc_state == HDLC_ESC) {
+            fprintf(stderr, "HDLC framing error - flag after escape\n");
+            hdlc_state = HDLC_IDLE;
+            pkt_len = 0;
+            crc8_local = 0;
+        } else if (c == HDLC_FLAG_BYTE && hdlc_state == HDLC_NORM) {
+            if (pkt_len > 1) {
+                crc8_local -= pkt_rx_buf[pkt_len - 1];
+                if (crc8_local == pkt_rx_buf[pkt_len - 1]) {
+                    *buf_ptr = pkt_rx_buf;
+                    *len_ptr = pkt_len - 1;
+                    pkt_len = 0;
+                    crc8_local = 0;
+                    goto end;
+                } else {
+                    fprintf(stderr, "HDLC frame CRC mismatch\n");
+                    hdlc_state = HDLC_IDLE;
+                    pkt_len = 0;
+                    crc8_local = 0;
+                }
+            } else {
+                pkt_len = 0;
+                crc8_local = 0;
+            }
+        } else if (c == HDLC_ESC_BYTE && hdlc_state == HDLC_NORM) {
+            hdlc_state = HDLC_ESC;
+        } else if (hdlc_state == HDLC_IDLE) {
+            /* Ignore input byte */
+        } else {
+            if (hdlc_state == HDLC_ESC) {
+                c ^= HDLC_ESC_MASK;
+                hdlc_state = HDLC_NORM;
+            }
+            if (pkt_len > pkt_len_max) {
+                fprintf(stderr, "HDLC framing error - frame too long\n");
+                hdlc_state = HDLC_IDLE;
+                pkt_len = 0;
+                crc8_local = 0;
+            } else {
+                crc8_local += c;
+                pkt_rx_buf[pkt_len] = c;
+                pkt_len++;
+            }
+        }
     }
 
-    return bytes_read;
+    if (bytes_read < sizeof(read_buf) && had_read) {
+        usleep(20000);
+    }
+
+end:
+
+    return rv;
 }

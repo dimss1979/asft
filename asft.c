@@ -17,6 +17,7 @@ int main(int argc, char **argv)
 {
     char *serial_port = NULL;
     char *baudrate = NULL;
+    unsigned char tx_buf[400]; // TODO remove
 
     if (argc < 4) {
         fprintf(stderr, "Usage: asft <mode> <serial_port> <baudrate>\n");
@@ -37,43 +38,47 @@ int main(int argc, char **argv)
     serial_port = argv[2];
     baudrate = argv[3];
 
-    if (serial_open(serial_port, baudrate)) {
+    if (serial_open(serial_port, baudrate, sizeof(tx_buf))) {
         fprintf(stderr, "Cannot open serial port\n");
         return 1;
     }
 
-    printf("Writing to serial\n");
-    {
-        // TODO remove
-        unsigned char buf[400];
-        memset(buf, 'n', sizeof(buf));
-        buf[0] = 'A';
-        buf[1] = '1';
-        buf[sizeof(buf) - 1] = 'Z';
-        serial_write(buf, sizeof(buf));
+    if (config.is_master) {
+        memset(tx_buf, 'n', sizeof(tx_buf));
+        tx_buf[0] = 'A';
+        tx_buf[sizeof(tx_buf) - 1] = 'Z';
+        while(1)
+        {
+            printf("Writing to serial\n");
 
-        sleep(1);
+            tx_buf[1] = '1';
+            tx_buf[2] = 0xaa;
+            tx_buf[3] = 0xaa;
+            serial_write(tx_buf, 10);
 
-        buf[1] = '2';
-        serial_write(buf, sizeof(buf));
+            tx_buf[1] = '2';
+            tx_buf[2] = 0x7e;
+            tx_buf[3] = 0x7d;
+            serial_write(tx_buf, 10);
+
+            sleep(3);
+        }
     }
 
     while (1) {
         int read_rv = 0;
-        unsigned char *read_buf = NULL;
-        size_t read_buf_len = 0;
+        unsigned char *pkt = NULL;
+        size_t pkt_len = 0;
 
-        read_rv = serial_read(&read_buf, &read_buf_len);
-        if (read_rv < 0) {
+        read_rv = serial_read(&pkt, &pkt_len);
+        if (read_rv) {
             fprintf(stderr, "Serial port read error\n");
             return 1;
         }
 
-        if (read_buf && read_buf_len) {
-            // TODO process received frame
+        if (pkt && pkt_len) {
+            printf("Received packet of %lu bytes\n", pkt_len);
         }
-
-        // TODO process timeouts
     }
 
     return 0;
