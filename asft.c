@@ -7,7 +7,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include "serial.h"
+#include "asft_serial.h"
 
 struct asft_config {
     bool is_master;
@@ -15,8 +15,9 @@ struct asft_config {
 
 int main(int argc, char **argv)
 {
-    char *serial_port = NULL;
-    char *baudrate = NULL;
+    char *serial_port_name;
+    char *baudrate;
+    asft_serial serial_port;
     unsigned char tx_buf[400]; // TODO remove
 
     if (argc < 4) {
@@ -35,10 +36,11 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    serial_port = argv[2];
+    serial_port_name = argv[2];
     baudrate = argv[3];
 
-    if (serial_open(serial_port, baudrate, sizeof(tx_buf))) {
+    serial_port = asft_serial_open(serial_port_name, baudrate, sizeof(tx_buf));
+    if (!serial_port) {
         fprintf(stderr, "Cannot open serial port\n");
         return 1;
     }
@@ -49,30 +51,39 @@ int main(int argc, char **argv)
         tx_buf[sizeof(tx_buf) - 1] = 'Z';
         while(1)
         {
-            printf("Writing to serial\n");
+            int rv;
+            printf("Sending packets\n");
 
             tx_buf[1] = '1';
             tx_buf[2] = 0xaa;
             tx_buf[3] = 0xaa;
-            serial_write(tx_buf, 10);
+            rv = asft_serial_send(serial_port, tx_buf, 10);
+            if (rv) {
+                fprintf(stderr, "Cannot send to serial port\n");
+                return 1;
+            }
 
             tx_buf[1] = '2';
             tx_buf[2] = 0x7e;
             tx_buf[3] = 0x7d;
-            serial_write(tx_buf, 10);
+            rv = asft_serial_send(serial_port, tx_buf, 10);
+            if (rv) {
+                fprintf(stderr, "Cannot send to serial port\n");
+                return 1;
+            }
 
             sleep(3);
         }
     }
 
     while (1) {
-        int read_rv = 0;
+        int rv = 0;
         unsigned char *pkt = NULL;
         size_t pkt_len = 0;
 
-        read_rv = serial_read(&pkt, &pkt_len);
-        if (read_rv) {
-            fprintf(stderr, "Serial port read error\n");
+        rv = asft_serial_receive(serial_port, &pkt, &pkt_len);
+        if (rv) {
+            fprintf(stderr, "Serial port reception error\n");
             return 1;
         }
 
