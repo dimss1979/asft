@@ -159,6 +159,7 @@ asft_serial asft_serial_open(char *devname, char *baudrate_string, size_t pkt_le
     t.c_cflag &= ~(PARENB | PARODD);
     t.c_cflag &= ~CSTOPB;
     t.c_cflag &= ~CRTSCTS;
+    t.c_iflag &= ~(IGNBRK|BRKINT|PARMRK|ISTRIP|INLCR|IGNCR|ICRNL);
     if (tcsetattr(p->fd, TCSANOW, &t) != 0) {
         fprintf(stderr, "Cannot set serial port attributes\n");
         goto error;
