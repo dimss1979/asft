@@ -74,7 +74,7 @@ int main(int argc, char **argv)
                 printf("%02X ", tx_buf[i]);
             printf("\n");
 
-            rv = asft_packet_encrypt(&cpkt, &cpkt_len, tx_buf, sizeof(tx_buf), key);
+            rv = asft_packet_encrypt(&cpkt, &cpkt_len, tx_buf, sizeof(tx_buf), key, 123);
             if (rv || !cpkt || !cpkt_len) {
                 fprintf(stderr, "Cannot encrypt packet\n");
                 return 1;
@@ -98,7 +98,7 @@ int main(int argc, char **argv)
                 printf("%02X ", tx_buf[i]);
             printf("\n");
 
-            rv = asft_packet_encrypt(&cpkt, &cpkt_len, tx_buf, sizeof(tx_buf), key);
+            rv = asft_packet_encrypt(&cpkt, &cpkt_len, tx_buf, sizeof(tx_buf), key, 123);
             if (rv || !cpkt || !cpkt_len) {
                 fprintf(stderr, "Cannot encrypt packet\n");
                 return 1;
@@ -137,7 +137,7 @@ int main(int argc, char **argv)
                 printf("%02X ", cpkt[i]);
             printf("\n");
 
-            rv = asft_packet_decrypt(&pkt, &pkt_len, cpkt, cpkt_len, key);
+            rv = asft_packet_decrypt(&pkt, &pkt_len, cpkt, cpkt_len, key, 123);
             if (!rv && pkt && pkt_len) {
                 printf("Received decrypted packet\n");
                 for (int i = 0; i < pkt_len; i++)

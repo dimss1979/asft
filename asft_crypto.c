@@ -13,6 +13,7 @@
 #define CP_KEY_SIZE   ASFT_CRYPTO_KEY_SIZE
 
 typedef struct _asft_cpacket {
+    unsigned char dst_addr;
     unsigned char nonce[CP_NONCE_SIZE];
     unsigned char tag[CP_TAG_SIZE];
     unsigned char cdata[];
@@ -84,7 +85,8 @@ int asft_packet_encrypt(
     size_t *cpkt_len_ptr,
     unsigned char *pkt,
     size_t pkt_len,
-    unsigned char *key
+    unsigned char *key,
+    unsigned char dst_addr
 ) {
     int rv = 0;
     size_t cpkt_len = sizeof(*g_cpkt) + pkt_len;
@@ -100,6 +102,7 @@ int asft_packet_encrypt(
         goto end;
     }
 
+    g_cpkt->dst_addr = dst_addr;
     do {
         rv = getrandom(g_cpkt->nonce, sizeof(g_cpkt->nonce), 0);
     } while(rv == -EINTR);
@@ -109,6 +112,10 @@ int asft_packet_encrypt(
     rv = 0;
 
     EVP_EncryptInit(g_ctx, EVP_chacha20_poly1305(), key, g_cpkt->nonce);
+    if (!EVP_EncryptUpdate(g_ctx, NULL, &outlen, &g_cpkt->dst_addr, sizeof(g_cpkt->dst_addr))) {
+        rv = -EINVAL;
+        goto end;
+    }
     if (!EVP_EncryptUpdate(g_ctx, g_cpkt->cdata, &outlen, pkt, pkt_len)) {
         rv = -EINVAL;
         goto end;
@@ -139,7 +146,8 @@ int asft_packet_decrypt(
     size_t *pkt_len_ptr,
     unsigned char *_cpkt,
     size_t cpkt_len,
-    unsigned char *key
+    unsigned char *key,
+    unsigned char dst_addr
 ) {
     int rv = 0;
     asft_cpacket cpkt = (asft_cpacket) _cpkt;
@@ -161,8 +169,17 @@ int asft_packet_decrypt(
         goto end;
     }
 
+    if (cpkt->dst_addr != dst_addr) {
+        rv = -EINVAL;
+        goto end;
+    }
+
     EVP_DecryptInit(g_ctx, EVP_chacha20_poly1305(), key, cpkt->nonce);
     if (!EVP_CIPHER_CTX_ctrl(g_ctx, EVP_CTRL_AEAD_SET_TAG, CP_TAG_SIZE, cpkt->tag)) {
+        rv = -EINVAL;
+        goto end;
+    }
+    if (!EVP_DecryptUpdate(g_ctx, NULL, &outlen, &cpkt->dst_addr, sizeof(cpkt->dst_addr))) {
         rv = -EINVAL;
         goto end;
     }

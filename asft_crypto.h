@@ -11,7 +11,8 @@ int asft_packet_encrypt(
     size_t *cpkt_len_ptr,
     unsigned char *pkt,
     size_t pkt_len,
-    unsigned char *key
+    unsigned char *key,
+    unsigned char dst_addr
 );
 
 int asft_packet_decrypt(
@@ -19,7 +20,8 @@ int asft_packet_decrypt(
     size_t *pkt_len_ptr,
     unsigned char *_cpkt,
     size_t cpkt_len,
-    unsigned char *key
+    unsigned char *key,
+    unsigned char dst_addr
 );
 
 #endif
