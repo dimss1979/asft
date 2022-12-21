@@ -3,8 +3,6 @@
 
 #define ASFT_CRYPTO_KEY_SIZE 32
 
-typedef struct _asft_cpacket *asft_cpacket;
-
 size_t asft_crypto_init(size_t pkt_len_max);
 void asft_crypto_cleanup();
 

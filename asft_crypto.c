@@ -12,11 +12,11 @@
 #define CP_TAG_SIZE   16
 #define CP_KEY_SIZE   ASFT_CRYPTO_KEY_SIZE
 
-struct _asft_cpacket {
+typedef struct _asft_cpacket {
     unsigned char nonce[CP_NONCE_SIZE];
     unsigned char tag[CP_TAG_SIZE];
     unsigned char cdata[];
-} __attribute__((packed));
+} __attribute__((packed)) *asft_cpacket;;
 
 static asft_cpacket g_cpkt = NULL;
 static size_t g_cpkt_len_max = 0;
