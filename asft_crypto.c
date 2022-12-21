@@ -95,6 +95,11 @@ int asft_packet_encrypt(
         goto end;
     }
 
+    if (pkt_len > g_pkt_len_max) {
+        rv = -EINVAL;
+        goto end;
+    }
+
     do {
         rv = getrandom(g_cpkt->nonce, sizeof(g_cpkt->nonce), 0);
     } while(rv == -EINTR);
@@ -142,6 +147,11 @@ int asft_packet_decrypt(
     int outlen, tmplen;
 
     if (cpkt_len <= sizeof(*cpkt)) {
+        rv = -EINVAL;
+        goto end;
+    }
+
+    if (pkt_len > g_pkt_len_max) {
         rv = -EINVAL;
         goto end;
     }
