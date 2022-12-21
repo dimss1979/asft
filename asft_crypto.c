@@ -16,7 +16,7 @@ typedef struct _asft_cpacket {
     unsigned char nonce[CP_NONCE_SIZE];
     unsigned char tag[CP_TAG_SIZE];
     unsigned char cdata[];
-} __attribute__((packed)) *asft_cpacket;;
+} __attribute__((packed)) *asft_cpacket;
 
 static asft_cpacket g_cpkt = NULL;
 static size_t g_cpkt_len_max = 0;
