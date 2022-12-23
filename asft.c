@@ -18,7 +18,6 @@ int main(int argc, char **argv)
 {
     char *serial_port_name;
     char *baudrate;
-    asft_serial serial_port;
     unsigned char tx_buf[30];
     unsigned char key[ASFT_CRYPTO_KEY_SIZE];
     size_t cpkt_len_max;
@@ -49,9 +48,8 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    serial_port = asft_serial_open(serial_port_name, baudrate, cpkt_len_max);
-    if (!serial_port) {
-        fprintf(stderr, "Cannot open serial port\n");
+    if (asft_serial_init(serial_port_name, baudrate, cpkt_len_max)) {
+        fprintf(stderr, "Cannot initialize serial port\n");
         return 1;
     }
 
@@ -84,8 +82,8 @@ int main(int argc, char **argv)
                 printf("%02X ", cpkt[i]);
             printf("\n\n");
 
-            rv = asft_serial_send(serial_port, (unsigned char*) cpkt, cpkt_len);
-            if (rv) {
+            rv = asft_serial_send((unsigned char*) cpkt, cpkt_len);
+            if (rv < 0) {
                 fprintf(stderr, "Cannot send to serial port\n");
                 return 1;
             }
@@ -108,8 +106,8 @@ int main(int argc, char **argv)
                 printf("%02X ", cpkt[i]);
             printf("\n\n");
 
-            rv = asft_serial_send(serial_port, (unsigned char*) cpkt, cpkt_len);
-            if (rv) {
+            rv = asft_serial_send((unsigned char*) cpkt, cpkt_len);
+            if (rv < 0) {
                 fprintf(stderr, "Cannot send to serial port\n");
                 return 1;
             }
@@ -125,13 +123,13 @@ int main(int argc, char **argv)
         unsigned char *pkt = NULL;
         size_t pkt_len = 0;
 
-        rv = asft_serial_receive(serial_port, &cpkt, &cpkt_len);
-        if (rv) {
-            fprintf(stderr, "Serial port reception error\n");
+        rv = asft_serial_receive(&cpkt, &cpkt_len);
+        if (rv < 0) {
+            fprintf(stderr, "Cannot receive from serial port\n");
             return 1;
         }
 
-        if (cpkt && cpkt_len) {
+        if (rv && cpkt && cpkt_len) {
             printf("Received encrypted packet:\n");
             for (int i = 0; i < cpkt_len; i++)
                 printf("%02X ", cpkt[i]);
