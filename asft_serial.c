@@ -173,6 +173,22 @@ int asft_serial_init(char *devname, char *baudrate_string, size_t pkt_len_max)
     }
     tcflush(p.fd, TCIOFLUSH);
 
+    // A partial workaround for some crappy USB serial adapters that
+    // produce all-zero bytes every read() after first open()
+    // if there was already some data in their receive buffer
+    // at the moment of first open().
+    // Even after second open(), they still do not fully tcflush()
+    // previously received data. Expect some garbage after a few
+    // first read() calls.
+    close(p.fd);
+    usleep(10000);
+    p.fd = open(devname, O_RDWR | O_NOCTTY);
+    if (p.fd < 0) {
+        fprintf(stderr, "Cannot reopen serial port\n");
+        goto error;
+    }
+    tcflush(p.fd, TCIOFLUSH);
+
     return 0;
 
 error:
