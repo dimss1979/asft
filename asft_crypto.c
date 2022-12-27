@@ -6,44 +6,35 @@
 #include <sys/random.h>
 #include <openssl/evp.h>
 
+#include "asft_proto.h"
+
 #include "asft_crypto.h"
 
-#define CP_NONCE_SIZE 12
-#define CP_TAG_SIZE   16
-#define CP_KEY_SIZE   ASFT_CRYPTO_KEY_SIZE
+static asft_packet *g_pkt = NULL;
+static EVP_CIPHER_CTX *g_ctx = NULL;
 
-typedef struct _asft_cpacket {
-    unsigned char dst_addr;
-    unsigned char nonce[CP_NONCE_SIZE];
-    unsigned char tag[CP_TAG_SIZE];
-    unsigned char cdata[];
-} __attribute__((packed)) *asft_cpacket;
-
-static asft_cpacket g_cpkt = NULL;
-static size_t g_cpkt_len_max = 0;
-static unsigned char *g_pkt = NULL;
-static size_t g_pkt_len_max = 0;
-EVP_CIPHER_CTX *g_ctx = NULL;
-
-size_t asft_crypto_init(size_t pkt_len_max)
+static void asft_crypto_cleanup()
 {
-    size_t cpkt_len_max = sizeof(*g_cpkt) + pkt_len_max;
+    if (g_ctx) {
+        EVP_CIPHER_CTX_free(g_ctx);
+        g_ctx = NULL;
+    }
 
+    if (g_pkt) {
+        free(g_pkt);
+        g_pkt = NULL;
+    }
+}
+
+size_t asft_crypto_init()
+{
     asft_crypto_cleanup();
 
-    g_pkt = malloc(pkt_len_max);
+    g_pkt = malloc(sizeof(*g_pkt));
     if (!g_pkt) {
-        fprintf(stderr, "Cannot allocate decrypted packet\n");
+        fprintf(stderr, "Cannot allocate temporary packet buffer\n");
         goto error;
     }
-    g_pkt_len_max = pkt_len_max;
-
-    g_cpkt = malloc(cpkt_len_max);
-    if (!g_cpkt) {
-        fprintf(stderr, "Cannot allocate encrypted packet\n");
-        goto error;
-    }
-    g_cpkt_len_max = cpkt_len_max;
 
     g_ctx = EVP_CIPHER_CTX_new();
     if (!g_ctx) {
@@ -51,80 +42,61 @@ size_t asft_crypto_init(size_t pkt_len_max)
         goto error;
     }
 
-    return cpkt_len_max;
+    return 0;
 
 error:
 
     asft_crypto_cleanup();
 
-    return 0;
-}
-
-void asft_crypto_cleanup()
-{
-    if (g_ctx) {
-        EVP_CIPHER_CTX_free(g_ctx);
-        g_ctx = NULL;
-    }
-
-    if (g_cpkt) {
-        free(g_cpkt);
-        g_cpkt = NULL;
-        g_cpkt_len_max = 0;
-    }
-
-    if (g_pkt) {
-        free(g_pkt);
-        g_pkt = NULL;
-        g_pkt_len_max = 0;
-    }
+    return -1;
 }
 
 int asft_packet_encrypt(
-    unsigned char **cpkt_ptr,
-    size_t *cpkt_len_ptr,
-    unsigned char *pkt,
+    asft_packet **cpkt_ptr,
+    asft_packet *pkt,
     size_t pkt_len,
-    unsigned char *key,
-    unsigned char dst_addr
+    unsigned char *key
 ) {
     int rv = 0;
-    size_t cpkt_len = sizeof(*g_cpkt) + pkt_len;
     int outlen, tmplen;
+    unsigned char *from = (unsigned char *) &pkt->cmd.cmd;
+    unsigned char *to = (unsigned char *) &g_pkt->cmd.cmd;
+    struct asft_base_hdr *h = &g_pkt->cmd.base;
+    size_t enc_len = pkt_len - sizeof(*h);
 
     if (!g_ctx) {
         rv = -EINVAL;
         goto end;
     }
 
-    if (pkt_len > g_pkt_len_max) {
+    if (pkt_len > sizeof(*pkt)) {
         rv = -EINVAL;
         goto end;
     }
 
-    g_cpkt->dst_addr = dst_addr;
+    memcpy(g_pkt, pkt, pkt_len);
+
     do {
-        rv = getrandom(g_cpkt->nonce, sizeof(g_cpkt->nonce), 0);
+        rv = getrandom(h->nonce, sizeof(h->nonce), 0);
     } while(rv == -EINTR);
-    if (rv < 0) {
+    if (rv < 0)
         goto end;
-    }
     rv = 0;
 
-    EVP_EncryptInit(g_ctx, EVP_chacha20_poly1305(), key, g_cpkt->nonce);
-    if (!EVP_EncryptUpdate(g_ctx, NULL, &outlen, &g_cpkt->dst_addr, sizeof(g_cpkt->dst_addr))) {
+    EVP_EncryptInit(g_ctx, EVP_chacha20_poly1305(), key, h->nonce);
+    if (!EVP_EncryptUpdate(g_ctx, NULL, &outlen, &h->dst_addr, sizeof(h->dst_addr))) {
         rv = -EINVAL;
         goto end;
     }
-    if (!EVP_EncryptUpdate(g_ctx, g_cpkt->cdata, &outlen, pkt, pkt_len)) {
+    if (!EVP_EncryptUpdate(g_ctx, to, &outlen, from, enc_len)) {
         rv = -EINVAL;
         goto end;
     }
-    if (!EVP_EncryptFinal(g_ctx, &g_cpkt->cdata[outlen], &tmplen)) {
+    if (!EVP_EncryptFinal(g_ctx, &to[outlen], &tmplen)) {
         rv = -EINVAL;
         goto end;
     }
-    if (!EVP_CIPHER_CTX_ctrl(g_ctx, EVP_CTRL_AEAD_GET_TAG, CP_TAG_SIZE, g_cpkt->tag)) {
+    if (!EVP_CIPHER_CTX_ctrl(g_ctx, EVP_CTRL_AEAD_GET_TAG, ASFT_TAG_LEN, h->tag)) {
         rv = -EINVAL;
         goto end;
     }
@@ -132,8 +104,7 @@ int asft_packet_encrypt(
 end:
 
     if (!rv) {
-        *cpkt_ptr = (unsigned char*) g_cpkt;
-        *cpkt_len_ptr = cpkt_len;
+        *cpkt_ptr = g_pkt;
     } else {
         fprintf(stderr, "Encryption failed\n");
     }
@@ -142,52 +113,44 @@ end:
 }
 
 int asft_packet_decrypt(
-    unsigned char **pkt_ptr,
-    size_t *pkt_len_ptr,
-    unsigned char *_cpkt,
+    asft_packet **pkt_ptr,
+    asft_packet *cpkt,
     size_t cpkt_len,
-    unsigned char *key,
-    unsigned char dst_addr
+    unsigned char *key
 ) {
     int rv = 0;
-    asft_cpacket cpkt = (asft_cpacket) _cpkt;
-    size_t pkt_len = cpkt_len - sizeof(*cpkt);
     int outlen, tmplen;
-
-    if (cpkt_len <= sizeof(*cpkt)) {
-        rv = -EINVAL;
-        goto end;
-    }
-
-    if (pkt_len > g_pkt_len_max) {
-        rv = -EINVAL;
-        goto end;
-    }
+    unsigned char *from = (unsigned char *) &cpkt->cmd.cmd;
+    unsigned char *to = (unsigned char *) &g_pkt->cmd.cmd;
+    struct asft_base_hdr *h = &cpkt->cmd.base;
+    size_t dec_len = cpkt_len - sizeof(*h);
 
     if (!g_ctx) {
         rv = -EINVAL;
         goto end;
     }
 
-    if (cpkt->dst_addr != dst_addr) {
+    if (cpkt_len > sizeof(*cpkt)) {
         rv = -EINVAL;
         goto end;
     }
 
-    EVP_DecryptInit(g_ctx, EVP_chacha20_poly1305(), key, cpkt->nonce);
-    if (!EVP_CIPHER_CTX_ctrl(g_ctx, EVP_CTRL_AEAD_SET_TAG, CP_TAG_SIZE, cpkt->tag)) {
+    memcpy(g_pkt, cpkt, cpkt_len);
+
+    EVP_DecryptInit(g_ctx, EVP_chacha20_poly1305(), key, h->nonce);
+    if (!EVP_CIPHER_CTX_ctrl(g_ctx, EVP_CTRL_AEAD_SET_TAG, ASFT_TAG_LEN, h->tag)) {
         rv = -EINVAL;
         goto end;
     }
-    if (!EVP_DecryptUpdate(g_ctx, NULL, &outlen, &cpkt->dst_addr, sizeof(cpkt->dst_addr))) {
+    if (!EVP_DecryptUpdate(g_ctx, NULL, &outlen, &h->dst_addr, sizeof(h->dst_addr))) {
         rv = -EINVAL;
         goto end;
     }
-    if (!EVP_DecryptUpdate(g_ctx, g_pkt, &outlen, cpkt->cdata, pkt_len)) {
+    if (!EVP_DecryptUpdate(g_ctx, to, &outlen, from, dec_len)) {
         rv = -EINVAL;
         goto end;
     }
-    if (!EVP_DecryptFinal(g_ctx, &g_pkt[outlen], &tmplen)) {
+    if (!EVP_DecryptFinal(g_ctx, &to[outlen], &tmplen)) {
         rv = -EINVAL;
         goto end;
     }
@@ -196,7 +159,6 @@ end:
 
     if (!rv) {
         *pkt_ptr = g_pkt;
-        *pkt_len_ptr = pkt_len;
     } else {
         fprintf(stderr, "Decryption failed\n");
     }

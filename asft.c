@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdbool.h>
 
+#include "asft_proto.h"
 #include "asft_serial.h"
 #include "asft_crypto.h"
 #include "asft_node.h"
@@ -13,7 +14,6 @@ int main(int argc, char **argv)
 {
     char *serial_port_name;
     char *baudrate;
-    size_t cpkt_len_max;
     bool is_gateway = false;
     int rv = 0;
 
@@ -35,13 +35,12 @@ int main(int argc, char **argv)
     serial_port_name = argv[2];
     baudrate = argv[3];
 
-    cpkt_len_max = asft_crypto_init(10000);
-    if (!cpkt_len_max) {
+    if (asft_crypto_init()) {
         fprintf(stderr, "Cannot initialize crypto\n");
         return 1;
     }
 
-    if (asft_serial_init(serial_port_name, baudrate, cpkt_len_max)) {
+    if (asft_serial_init(serial_port_name, baudrate, sizeof(asft_packet))) {
         fprintf(stderr, "Cannot initialize serial port\n");
         return 1;
     }
