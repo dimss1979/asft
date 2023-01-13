@@ -53,13 +53,13 @@ error:
 
 int asft_packet_encrypt(
     asft_packet **cpkt_ptr,
-    asft_packet *pkt,
+    void *pkt,
     size_t pkt_len,
     unsigned char *key
 ) {
     int rv = 0;
     int outlen, tmplen;
-    unsigned char *from = (unsigned char *) &pkt->cmd.cmd;
+    unsigned char *from = (unsigned char *) &((struct asft_cmd*) pkt)->cmd;
     unsigned char *to = (unsigned char *) &g_pkt->cmd.cmd;
     struct asft_base_hdr *h = &g_pkt->cmd.base;
     size_t enc_len = pkt_len - sizeof(*h);
@@ -69,7 +69,12 @@ int asft_packet_encrypt(
         goto end;
     }
 
-    if (pkt_len > sizeof(*pkt)) {
+    if (pkt_len > sizeof(asft_packet)) {
+        rv = -EINVAL;
+        goto end;
+    }
+
+    if (pkt_len < sizeof(struct asft_base_hdr)) {
         rv = -EINVAL;
         goto end;
     }

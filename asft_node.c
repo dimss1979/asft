@@ -4,6 +4,7 @@
 #include "asft_proto.h"
 #include "asft_crypto.h"
 #include "asft_serial.h"
+#include "asft_misc.h"
 
 #include "asft_node.h"
 
@@ -19,38 +20,41 @@ int asft_node_loop()
         asft_packet *cpkt = NULL;
         size_t pkt_len = 0;
         struct asft_base_hdr *h;
-        unsigned char *buf;
+        struct asft_cmd_hdr *ch;
 
         rv = asft_serial_receive((unsigned char**) &cpkt, &pkt_len);
         if (rv < 0) {
-            fprintf(stderr, "Cannot receive from serial port\n");
+            fprintf(stderr, "Cannot receive packet\n");
             return 1;
         }
+        if (!rv || !cpkt || !pkt_len) {
+            continue;
+        }
 
-        if (rv && cpkt && pkt_len) {
-            printf("Received encrypted packet:\n");
-            buf = (unsigned char*) cpkt;
-            for (int i = 0; i < pkt_len; i++)
-                printf("%02X ", buf[i]);
-            printf("\n");
+        asft_dump(cpkt, pkt_len, "Received packet");
 
-            h = &cpkt->cmd.base;
-            if (h->dst_addr != 1) {
-                fprintf(stderr, "Wrong destination address %u\n", h->dst_addr);
-                continue;
-            }
+        h = &cpkt->cmd.base;
+        if (h->dst_addr != 1) {
+            fprintf(stderr, "Wrong address %u\n", h->dst_addr);
+            continue;
+        }
 
-            rv = asft_packet_decrypt(&pkt, cpkt, pkt_len, key);
-            if (!rv && pkt) {
-                printf("Received decrypted packet\n");
-                buf = (unsigned char*) pkt;
-                for (int i = 0; i < pkt_len; i++)
-                    printf("%02X ", buf[i]);
-                printf("\n");
-            } else {
-                fprintf(stderr, "Cannot decrypt packet\n");
-            }
-            printf("\n");
+        rv = asft_packet_decrypt(&pkt, cpkt, pkt_len, key);
+        if (rv || !pkt) {
+            fprintf(stderr, "Decryption failed\n");
+            continue;
+        }
+
+        asft_dump(pkt, pkt_len, "Decrypted packet");
+
+        ch = &pkt->cmd.cmd;
+        switch (ch->command)
+        {
+            case ASFT_REQ_ECDH_KEY:
+                printf("ECDH command\n");
+                break;
+            default:
+                fprintf(stderr, "Unknown command %x\n", ch->command);
         }
     }
 

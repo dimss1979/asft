@@ -7,7 +7,7 @@ size_t asft_crypto_init();
 
 int asft_packet_encrypt(
     asft_packet **cpkt_ptr,
-    asft_packet *pkt,
+    void *pkt,
     size_t pkt_len,
     unsigned char *key
 );
