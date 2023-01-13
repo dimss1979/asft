@@ -13,8 +13,7 @@ int asft_gateway_loop()
 {
     unsigned char key[ASFT_KEY_LEN];
     asft_packet pkt, *cpkt = NULL;
-    uint32_t session_token = 0;
-    uint32_t dialog_token = -1;
+    uint32_t packet_number = -1;
 
     memset(key, 0xaa, sizeof(key));
     memset(&pkt, 0, sizeof(pkt));
@@ -27,8 +26,7 @@ int asft_gateway_loop()
 
         pkt.cmd.base.dst_addr = 1;
         pkt.cmd.cmd.command = 0x33;
-        pkt.cmd.cmd.session_token = htonl(session_token++);
-        pkt.cmd.cmd.dialog_token = htonl(dialog_token--);
+        pkt.cmd.cmd.packet_number = htonl(packet_number--);
         printf("Sending packet:\n");
         buf = (unsigned char*) &pkt;
         for (int i = 0; i < pkt_len; i++)

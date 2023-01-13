@@ -15,8 +15,7 @@ struct asft_base_hdr {
 
 struct asft_cmd_hdr {
     uint8_t command;
-    uint32_t dialog_token;
-    uint32_t session_token;
+    uint32_t packet_number;
 } __attribute__((packed));
 
 struct asft_cmd {
