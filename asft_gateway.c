@@ -25,9 +25,11 @@ int asft_gateway_loop()
         size_t pkt_len = sizeof(pkt);
 
         pkt_len = sizeof(pkt);
+        memset(&pkt, 0, pkt_len);
         pkt.base.dst_addr = 1;
-        pkt.cmd.command = ASFT_REQ_ECDH_KEY;
-        getrandom(&pkt.cmd.packet_number, sizeof(pkt.cmd.packet_number), 0);
+        pkt.base.command = ASFT_REQ_ECDH_KEY;
+        getrandom(&pkt.base.packet_number, sizeof(pkt.base.packet_number), 0);
+        memset(&pkt.base.tag, 0xaa, sizeof(pkt.base.tag));
         memset(&pkt.public_key, 'x', sizeof(pkt.public_key));
         asft_dump(&pkt, sizeof(pkt), "Prepared packet");
 

@@ -19,8 +19,7 @@ int asft_node_loop()
         asft_packet *pkt = NULL;
         asft_packet *cpkt = NULL;
         size_t pkt_len = 0;
-        struct asft_base_hdr *h;
-        struct asft_cmd_hdr *ch;
+        struct asft_base_hdr *h, *dh;
 
         rv = asft_serial_receive((unsigned char**) &cpkt, &pkt_len);
         if (rv < 0) {
@@ -33,7 +32,7 @@ int asft_node_loop()
 
         asft_dump(cpkt, pkt_len, "Received packet");
 
-        h = &cpkt->cmd.base;
+        h = &cpkt->base;
         if (h->dst_addr != 1) {
             fprintf(stderr, "Wrong address %u\n", h->dst_addr);
             continue;
@@ -47,14 +46,14 @@ int asft_node_loop()
 
         asft_dump(pkt, pkt_len, "Decrypted packet");
 
-        ch = &pkt->cmd.cmd;
-        switch (ch->command)
+        dh = &pkt->base;
+        switch (dh->command)
         {
             case ASFT_REQ_ECDH_KEY:
                 printf("ECDH command\n");
                 break;
             default:
-                fprintf(stderr, "Unknown command %x\n", ch->command);
+                fprintf(stderr, "Unknown command %x\n", dh->command);
         }
     }
 

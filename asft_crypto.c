@@ -10,6 +10,8 @@
 
 #include "asft_crypto.h"
 
+#define CHACHA20_POLY1305_MAX_IVLEN 12
+
 static asft_packet *g_pkt = NULL;
 static EVP_CIPHER_CTX *g_ctx = NULL;
 
@@ -59,10 +61,11 @@ int asft_packet_encrypt(
 ) {
     int rv = 0;
     int outlen, tmplen;
-    unsigned char *from = (unsigned char *) &((struct asft_cmd*) pkt)->cmd;
-    unsigned char *to = (unsigned char *) &g_pkt->cmd.cmd;
-    struct asft_base_hdr *h = &g_pkt->cmd.base;
-    size_t enc_len = pkt_len - sizeof(*h);
+    struct asft_base_hdr *h = (struct asft_base_hdr*) pkt;
+    unsigned char *from = (unsigned char *) &h->command;
+    unsigned char *to = (unsigned char *) &g_pkt->base.command;
+    size_t enc_len = pkt_len - sizeof(*h) + sizeof(h->command);
+    unsigned char nonce[CHACHA20_POLY1305_MAX_IVLEN] = {0};
 
     if (!g_ctx) {
         rv = -EINVAL;
@@ -79,18 +82,10 @@ int asft_packet_encrypt(
         goto end;
     }
 
-    memcpy(g_pkt, pkt, pkt_len);
+    memcpy(g_pkt, pkt, pkt_len - enc_len);
+    memcpy(nonce, &h->packet_number, sizeof(h->packet_number));
 
-    do {
-        rv = getrandom(h->nonce, sizeof(h->nonce), 0);
-    } while(rv == -EINTR);
-    if (rv < 0)
-        goto end;
-    rv = 0;
-
-    EVP_EncryptInit(g_ctx, EVP_chacha20_poly1305(), NULL, NULL);
-    EVP_CIPHER_CTX_ctrl(g_ctx, EVP_CTRL_AEAD_SET_IVLEN, ASFT_NONCE_LEN, NULL);
-    EVP_EncryptInit(g_ctx, NULL, key, h->nonce);
+    EVP_EncryptInit(g_ctx, EVP_chacha20_poly1305(), key, nonce);
     if (!EVP_EncryptUpdate(g_ctx, NULL, &outlen, &h->dst_addr, sizeof(h->dst_addr))) {
         rv = -EINVAL;
         goto end;
@@ -103,7 +98,7 @@ int asft_packet_encrypt(
         rv = -EINVAL;
         goto end;
     }
-    if (!EVP_CIPHER_CTX_ctrl(g_ctx, EVP_CTRL_AEAD_GET_TAG, ASFT_TAG_LEN, h->tag)) {
+    if (!EVP_CIPHER_CTX_ctrl(g_ctx, EVP_CTRL_AEAD_GET_TAG, ASFT_TAG_LEN, &g_pkt->base.tag)) {
         rv = -EINVAL;
         goto end;
     }
@@ -127,10 +122,11 @@ int asft_packet_decrypt(
 ) {
     int rv = 0;
     int outlen, tmplen;
-    unsigned char *from = (unsigned char *) &cpkt->cmd.cmd;
-    unsigned char *to = (unsigned char *) &g_pkt->cmd.cmd;
-    struct asft_base_hdr *h = &cpkt->cmd.base;
-    size_t dec_len = cpkt_len - sizeof(*h);
+    struct asft_base_hdr *h = &cpkt->base;
+    unsigned char *from = (unsigned char *) &h->command;
+    unsigned char *to = (unsigned char *) &g_pkt->base.command;
+    size_t dec_len = cpkt_len - sizeof(*h) + sizeof(h->command);
+    unsigned char nonce[CHACHA20_POLY1305_MAX_IVLEN] = {0};
 
     if (!g_ctx) {
         rv = -EINVAL;
@@ -142,11 +138,15 @@ int asft_packet_decrypt(
         goto end;
     }
 
-    memcpy(g_pkt, cpkt, cpkt_len);
+    if (cpkt_len < sizeof(struct asft_base_hdr)) {
+        rv = -EINVAL;
+        goto end;
+    }
 
-    EVP_DecryptInit(g_ctx, EVP_chacha20_poly1305(), NULL, NULL);
-    EVP_CIPHER_CTX_ctrl(g_ctx, EVP_CTRL_AEAD_SET_IVLEN, ASFT_NONCE_LEN, NULL);
-    EVP_DecryptInit(g_ctx, NULL, key, h->nonce);
+    memcpy(g_pkt, cpkt, cpkt_len - dec_len);
+    memcpy(nonce, &h->packet_number, sizeof(h->packet_number));
+
+    EVP_DecryptInit(g_ctx, EVP_chacha20_poly1305(), key, nonce);
     if (!EVP_CIPHER_CTX_ctrl(g_ctx, EVP_CTRL_AEAD_SET_TAG, ASFT_TAG_LEN, h->tag)) {
         rv = -EINVAL;
         goto end;
