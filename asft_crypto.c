@@ -85,7 +85,7 @@ int asft_packet_encrypt(
     memcpy(g_pkt, pkt, pkt_len - enc_len);
     memcpy(nonce, &h->packet_number, sizeof(h->packet_number));
 
-    EVP_EncryptInit(g_ctx, EVP_chacha20_poly1305(), key, nonce);
+    EVP_EncryptInit_ex(g_ctx, EVP_chacha20_poly1305(), NULL, key, nonce);
     if (!EVP_EncryptUpdate(g_ctx, NULL, &outlen, &h->dst_addr, sizeof(h->dst_addr))) {
         rv = -EINVAL;
         goto end;
@@ -94,7 +94,7 @@ int asft_packet_encrypt(
         rv = -EINVAL;
         goto end;
     }
-    if (!EVP_EncryptFinal(g_ctx, &to[outlen], &tmplen)) {
+    if (!EVP_EncryptFinal_ex(g_ctx, &to[outlen], &tmplen)) {
         rv = -EINVAL;
         goto end;
     }
@@ -146,7 +146,7 @@ int asft_packet_decrypt(
     memcpy(g_pkt, cpkt, cpkt_len - dec_len);
     memcpy(nonce, &h->packet_number, sizeof(h->packet_number));
 
-    EVP_DecryptInit(g_ctx, EVP_chacha20_poly1305(), key, nonce);
+    EVP_DecryptInit_ex(g_ctx, EVP_chacha20_poly1305(), NULL, key, nonce);
     if (!EVP_CIPHER_CTX_ctrl(g_ctx, EVP_CTRL_AEAD_SET_TAG, ASFT_TAG_LEN, h->tag)) {
         rv = -EINVAL;
         goto end;
@@ -159,7 +159,7 @@ int asft_packet_decrypt(
         rv = -EINVAL;
         goto end;
     }
-    if (!EVP_DecryptFinal(g_ctx, &to[outlen], &tmplen)) {
+    if (!EVP_DecryptFinal_ex(g_ctx, &to[outlen], &tmplen)) {
         rv = -EINVAL;
         goto end;
     }
