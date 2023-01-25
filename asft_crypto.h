@@ -3,7 +3,20 @@
 
 #include "asft_proto.h"
 
+struct asft_ecdh;
+
 size_t asft_crypto_init();
+
+int asft_ecdh_prepare(
+    struct asft_ecdh **ecdh,
+    unsigned char *pkey_out
+);
+
+int asft_ecdh_process(
+    struct asft_ecdh **ecdh,
+    unsigned char *peer_pkey_in,
+    unsigned char *skey_out
+);
 
 int asft_packet_encrypt(
     asft_packet **cpkt_ptr,

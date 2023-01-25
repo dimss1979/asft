@@ -12,6 +12,10 @@
 
 #define CHACHA20_POLY1305_MAX_IVLEN 12
 
+struct asft_ecdh {
+    uint32_t aaa;
+};
+
 static asft_packet *g_pkt = NULL;
 static EVP_CIPHER_CTX *g_ctx = NULL;
 
@@ -51,6 +55,21 @@ error:
     asft_crypto_cleanup();
 
     return -1;
+}
+
+int asft_ecdh_prepare(
+    struct asft_ecdh **ecdh,
+    unsigned char *pkey_out
+) {
+    return 0;
+}
+
+int asft_ecdh_process(
+    struct asft_ecdh **ecdh,
+    unsigned char *peer_pkey_in,
+    unsigned char *skey_out
+) {
+    return 0;
 }
 
 int asft_packet_encrypt(
