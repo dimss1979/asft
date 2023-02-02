@@ -9,7 +9,6 @@
 #define ASFT_ECDH_KEY_LEN  32
 
 struct asft_base_hdr {
-    uint8_t dst_addr;
     uint32_t packet_number;
     uint8_t tag[ASFT_TAG_LEN];
     uint8_t command;

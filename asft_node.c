@@ -32,7 +32,6 @@ static void process_req_ecdh(struct asft_cmd_ecdh *req, size_t req_len)
 
     asft_dump(skey, sizeof(skey), "Session key");
 
-    resp.base.dst_addr = 0;
     resp.base.packet_number = htobe32(be32toh(req->base.packet_number) + 1);
     resp.base.command = ASFT_RSP_ECDH_KEY;
 
@@ -65,7 +64,7 @@ int asft_node_loop()
         asft_packet *pkt = NULL;
         asft_packet *cpkt = NULL;
         size_t pkt_len = 0;
-        struct asft_base_hdr *h, *dh;
+        struct asft_base_hdr *dh;
 
         rv = asft_serial_receive((unsigned char**) &cpkt, &pkt_len);
         if (rv < 0) {
@@ -77,12 +76,6 @@ int asft_node_loop()
         }
 
         asft_dump(cpkt, pkt_len, "Received packet");
-
-        h = &cpkt->base;
-        if (h->dst_addr != 1) {
-            fprintf(stderr, "Wrong address %u\n", h->dst_addr);
-            continue;
-        }
 
         rv = asft_packet_decrypt(&pkt, cpkt, pkt_len, mkey);
         if (rv || !pkt) {

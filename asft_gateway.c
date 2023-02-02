@@ -60,7 +60,6 @@ int asft_gateway_loop()
 
         getrandom(&packet_number, sizeof(packet_number), 0);
         memset(&pkt, 0, pkt_len);
-        pkt.base.dst_addr = 1;
         pkt.base.command = ASFT_REQ_ECDH_KEY;
         pkt.base.packet_number = htobe32(packet_number);
         memset(&pkt.base.tag, 0xaa, sizeof(pkt.base.tag));
@@ -100,10 +99,6 @@ int asft_gateway_loop()
             asft_dump(cresp, pkt_len, "Received response");
 
             h = &cresp->base;
-            if (h->dst_addr != 0) {
-                fprintf(stderr, "Wrong address %u\n", h->dst_addr);
-                continue;
-            }
             rx_packet_number = be32toh(h->packet_number);
             if (rx_packet_number != packet_number + 1) {
                 fprintf(stderr, "Wrong packet number %u - expected %u\n", rx_packet_number, packet_number + 1);

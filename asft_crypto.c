@@ -195,9 +195,6 @@ int asft_packet_encrypt(
     if (!EVP_EncryptInit_ex(g_ctx, EVP_chacha20_poly1305(), NULL, key, nonce))
         goto error;
 
-    if (!EVP_EncryptUpdate(g_ctx, NULL, &outlen, &h->dst_addr, sizeof(h->dst_addr)))
-        goto error;
-
     if (!EVP_EncryptUpdate(g_ctx, to, &outlen, from, enc_len))
         goto error;
 
@@ -244,9 +241,6 @@ int asft_packet_decrypt(
         goto error;
 
     if (!EVP_CIPHER_CTX_ctrl(g_ctx, EVP_CTRL_AEAD_SET_TAG, ASFT_TAG_LEN, h->tag))
-        goto error;
-
-    if (!EVP_DecryptUpdate(g_ctx, NULL, &outlen, &h->dst_addr, sizeof(h->dst_addr)))
         goto error;
 
     if (!EVP_DecryptUpdate(g_ctx, to, &outlen, from, dec_len))
