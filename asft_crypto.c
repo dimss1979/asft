@@ -13,7 +13,7 @@
 #define CHACHA20_POLY1305_MAX_IVLEN 12
 
 struct asft_ecdh {
-    uint32_t aaa;
+    EVP_PKEY *pkey;
 };
 
 static asft_packet *g_pkt = NULL;
@@ -29,6 +29,16 @@ static void asft_crypto_cleanup()
     if (g_pkt) {
         free(g_pkt);
         g_pkt = NULL;
+    }
+}
+
+static void ecdh_cleanup(struct asft_ecdh *ecdh)
+{
+    if (ecdh) {
+        if (ecdh->pkey) {
+            EVP_PKEY_free(ecdh->pkey);
+        }
+        free(ecdh);
     }
 }
 
@@ -61,7 +71,43 @@ int asft_ecdh_prepare(
     struct asft_ecdh **ecdh,
     unsigned char *pkey_out
 ) {
-    return 0;
+    struct asft_ecdh *c = NULL;
+    size_t len = ASFT_ECDH_KEY_LEN;
+    EVP_PKEY_CTX *pctx = NULL;
+    int rv = 1;
+
+    c = malloc(sizeof(*c));
+    if (!c)
+        goto error;
+    memset(c, 0, sizeof(*c));
+
+    pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_X25519, NULL);
+    if (!pctx)
+        goto error;
+
+    if (EVP_PKEY_keygen_init(pctx) != 1)
+        goto error;
+
+    if (EVP_PKEY_keygen(pctx, &c->pkey) != 1)
+        goto error;
+
+    if (EVP_PKEY_get_raw_public_key(c->pkey, pkey_out, &len) != 1)
+        goto error;
+
+    if (*ecdh) {
+        ecdh_cleanup(*ecdh);
+    }
+    *ecdh = c;
+    rv = 0;
+
+error:
+
+    EVP_PKEY_CTX_free(pctx);
+    if (rv) {
+        ecdh_cleanup(c);
+    }
+
+    return rv;
 }
 
 int asft_ecdh_process(
@@ -69,7 +115,56 @@ int asft_ecdh_process(
     unsigned char *peer_pkey_in,
     unsigned char *skey_out
 ) {
-    return 0;
+    int rv = 1;
+    struct asft_ecdh *c = *ecdh;
+    EVP_PKEY *peer_key = NULL;
+    EVP_PKEY_CTX *pctx = NULL;
+    size_t skeylen;
+    unsigned int md_size;
+    unsigned char shared_secret[ASFT_ECDH_KEY_LEN];
+
+    if (!c)
+        goto error;
+
+    peer_key = EVP_PKEY_new_raw_public_key(EVP_PKEY_X25519, NULL, peer_pkey_in, ASFT_ECDH_KEY_LEN);
+    if (!peer_key)
+        goto error;
+
+    pctx = EVP_PKEY_CTX_new(c->pkey, NULL);
+    if (!pctx)
+        goto error;
+
+    if (EVP_PKEY_derive_init(pctx) != 1)
+        goto error;
+
+    if (EVP_PKEY_derive_set_peer(pctx, peer_key) <= 0)
+        goto error;
+
+    if (EVP_PKEY_derive(pctx, NULL, &skeylen) <= 0)
+        goto error;
+
+    if (skeylen != sizeof(shared_secret))
+        goto error;
+
+    if (EVP_PKEY_derive(pctx, shared_secret, &skeylen) <= 0)
+        goto error;
+
+    if (EVP_Digest(shared_secret, sizeof(shared_secret), skey_out, &md_size, EVP_sha3_256(), NULL) != 1)
+        goto error;
+
+    if (md_size != ASFT_KEY_LEN)
+        goto error;
+
+    rv = 0;
+
+error:
+
+    EVP_PKEY_free(peer_key);
+    EVP_PKEY_CTX_free(pctx);
+    ecdh_cleanup(c);
+    *ecdh = NULL;
+
+    return rv;
 }
 
 int asft_packet_encrypt(

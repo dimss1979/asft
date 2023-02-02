@@ -129,7 +129,7 @@ int asft_gateway_loop()
             got_response = true;
         };
 
-        sleep(1);
+        sleep(3);
     }
 
     return 0;
