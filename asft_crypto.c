@@ -11,6 +11,7 @@
 #include "asft_crypto.h"
 
 #define CHACHA20_POLY1305_MAX_IVLEN 12
+#define CHACHA20_MAX_IVLEN 16
 
 struct asft_ecdh {
     EVP_PKEY *pkey;
@@ -40,6 +41,25 @@ static void ecdh_cleanup(struct asft_ecdh *ecdh)
         }
         free(ecdh);
     }
+}
+
+static int derive_outer_key(
+    unsigned char *key_outer,
+    unsigned char *key_inner
+) {
+    unsigned int md_size;
+
+    if (EVP_Digest(key_inner, ASFT_KEY_LEN, key_outer, &md_size, EVP_sha3_256(), NULL) != 1)
+        goto error;
+
+    if (md_size != ASFT_KEY_LEN)
+        goto error;
+
+    return 0;
+
+error:
+
+    return 1;
 }
 
 size_t asft_crypto_init()
@@ -113,7 +133,7 @@ error:
 int asft_ecdh_process(
     struct asft_ecdh **ecdh,
     unsigned char *peer_pkey_in,
-    unsigned char *skey_out
+    struct asft_key *skey_out
 ) {
     int rv = 1;
     struct asft_ecdh *c = *ecdh;
@@ -149,10 +169,13 @@ int asft_ecdh_process(
     if (EVP_PKEY_derive(pctx, shared_secret, &skeylen) <= 0)
         goto error;
 
-    if (EVP_Digest(shared_secret, sizeof(shared_secret), skey_out, &md_size, EVP_sha3_256(), NULL) != 1)
+    if (EVP_Digest(shared_secret, sizeof(shared_secret), skey_out->inner, &md_size, EVP_sha3_256(), NULL) != 1)
         goto error;
 
     if (md_size != ASFT_KEY_LEN)
+        goto error;
+
+    if (derive_outer_key(skey_out->outer, skey_out->inner))
         goto error;
 
     rv = 0;
@@ -171,14 +194,15 @@ int asft_packet_encrypt(
     asft_packet **cpkt_ptr,
     void *pkt,
     size_t pkt_len,
-    unsigned char *key
+    struct asft_key *key
 ) {
     int outlen, tmplen;
     struct asft_base_hdr *h = (struct asft_base_hdr*) pkt;
     unsigned char *from = (unsigned char *) &h->command;
     unsigned char *to = (unsigned char *) &g_pkt->base.command;
     size_t enc_len = pkt_len - sizeof(*h) + sizeof(h->command);
-    unsigned char nonce[CHACHA20_POLY1305_MAX_IVLEN] = {0};
+    unsigned char nonce_inner[CHACHA20_POLY1305_MAX_IVLEN] = {0};
+    unsigned char nonce_outer[CHACHA20_MAX_IVLEN] = {0};
 
     if (!g_ctx)
         goto error;
@@ -189,10 +213,9 @@ int asft_packet_encrypt(
     if (pkt_len < sizeof(struct asft_base_hdr))
         goto error;
 
-    memcpy(g_pkt, pkt, pkt_len - enc_len);
-    memcpy(nonce, &h->packet_number, sizeof(h->packet_number));
+    memcpy(nonce_inner, h->pn, sizeof(h->pn));
 
-    if (!EVP_EncryptInit_ex(g_ctx, EVP_chacha20_poly1305(), NULL, key, nonce))
+    if (!EVP_EncryptInit_ex(g_ctx, EVP_chacha20_poly1305(), NULL, key->inner, nonce_inner))
         goto error;
 
     if (!EVP_EncryptUpdate(g_ctx, to, &outlen, from, enc_len))
@@ -202,6 +225,17 @@ int asft_packet_encrypt(
         goto error;
 
     if (!EVP_CIPHER_CTX_ctrl(g_ctx, EVP_CTRL_AEAD_GET_TAG, ASFT_TAG_LEN, &g_pkt->base.tag))
+        goto error;
+
+    memcpy(nonce_outer, &g_pkt->base.tag, sizeof(g_pkt->base.tag));
+
+    if (!EVP_EncryptInit_ex(g_ctx, EVP_chacha20(), NULL, key->outer, nonce_outer))
+        goto error;
+
+    if (!EVP_EncryptUpdate(g_ctx, g_pkt->base.pn, &outlen, h->pn, sizeof(h->pn)))
+        goto error;
+
+    if (!EVP_EncryptFinal_ex(g_ctx, &g_pkt->base.pn[outlen], &tmplen))
         goto error;
 
     *cpkt_ptr = g_pkt;
@@ -216,14 +250,15 @@ int asft_packet_decrypt(
     asft_packet **pkt_ptr,
     asft_packet *cpkt,
     size_t cpkt_len,
-    unsigned char *key
+    struct asft_key *key
 ) {
     int outlen, tmplen;
     struct asft_base_hdr *h = &cpkt->base;
     unsigned char *from = (unsigned char *) &h->command;
     unsigned char *to = (unsigned char *) &g_pkt->base.command;
     size_t dec_len = cpkt_len - sizeof(*h) + sizeof(h->command);
-    unsigned char nonce[CHACHA20_POLY1305_MAX_IVLEN] = {0};
+    unsigned char nonce_inner[CHACHA20_POLY1305_MAX_IVLEN] = {0};
+    unsigned char nonce_outer[CHACHA20_MAX_IVLEN] = {0};
 
     if (!g_ctx)
         goto error;
@@ -234,10 +269,20 @@ int asft_packet_decrypt(
     if (cpkt_len < sizeof(struct asft_base_hdr))
         goto error;
 
-    memcpy(g_pkt, cpkt, cpkt_len - dec_len);
-    memcpy(nonce, &h->packet_number, sizeof(h->packet_number));
+    memcpy(nonce_outer, &h->tag, sizeof(h->tag));
 
-    if (!EVP_DecryptInit_ex(g_ctx, EVP_chacha20_poly1305(), NULL, key, nonce))
+    if (!EVP_DecryptInit_ex(g_ctx, EVP_chacha20(), NULL, key->outer, nonce_outer))
+        goto error;
+
+    if (!EVP_DecryptUpdate(g_ctx, g_pkt->base.pn, &outlen, h->pn, sizeof(h->pn)))
+        goto error;
+
+    if (!EVP_DecryptFinal_ex(g_ctx, &g_pkt->base.pn[outlen], &tmplen))
+        goto error;
+
+    memcpy(nonce_inner, g_pkt->base.pn, sizeof(g_pkt->base.pn));
+
+    if (!EVP_DecryptInit_ex(g_ctx, EVP_chacha20_poly1305(), NULL, key->inner, nonce_inner))
         goto error;
 
     if (!EVP_CIPHER_CTX_ctrl(g_ctx, EVP_CTRL_AEAD_SET_TAG, ASFT_TAG_LEN, h->tag))
@@ -255,4 +300,26 @@ int asft_packet_decrypt(
 error:
 
     return -1;
+}
+
+int asft_kdf(
+    struct asft_key *key,
+    char *password
+) {
+    unsigned int md_size;
+
+    if (EVP_Digest(password, strlen(password), key->inner, &md_size, EVP_sha3_256(), NULL) != 1)
+        goto error;
+
+    if (md_size != ASFT_KEY_LEN)
+        goto error;
+
+    if (derive_outer_key(key->outer, key->inner))
+        goto error;
+
+    return 0;
+
+error:
+
+    return 1;
 }

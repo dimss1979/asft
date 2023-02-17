@@ -11,8 +11,8 @@
 #include "asft_node.h"
 
 static struct asft_ecdh *ecdh = NULL;
-static unsigned char mkey[ASFT_KEY_LEN];
-static unsigned char skey[ASFT_KEY_LEN];
+static struct asft_key mkey;
+static struct asft_key skey;
 
 static void process_req_ecdh(struct asft_cmd_ecdh *req, size_t req_len)
 {
@@ -27,17 +27,17 @@ static void process_req_ecdh(struct asft_cmd_ecdh *req, size_t req_len)
     if (asft_ecdh_prepare(&ecdh, resp.public_key))
         goto error;
 
-    if (asft_ecdh_process(&ecdh, req->public_key, skey))
+    if (asft_ecdh_process(&ecdh, req->public_key, &skey))
         goto error;
 
-    asft_dump(skey, sizeof(skey), "Session key");
+    asft_dump(&skey, sizeof(skey), "Session key");
 
     resp.base.packet_number = htobe32(be32toh(req->base.packet_number) + 1);
     resp.base.command = ASFT_RSP_ECDH_KEY;
 
     asft_dump(&resp, sizeof(resp), "Prepared ECDH response");
 
-    if (asft_packet_encrypt(&cpkt, &resp, sizeof(resp), mkey))
+    if (asft_packet_encrypt(&cpkt, &resp, sizeof(resp), &mkey))
         goto error;
 
     asft_dump(cpkt, sizeof(resp), "Encrypted ECDH response");
@@ -56,8 +56,8 @@ error:
 
 int asft_node_loop()
 {
-    memset(mkey, 0xaa, sizeof(mkey));
-    getrandom(skey, sizeof(skey), 0);
+    asft_kdf(&mkey, "123");
+    getrandom(&skey, sizeof(skey), 0);
 
     while (1) {
         int rv = 0;
@@ -77,7 +77,7 @@ int asft_node_loop()
 
         asft_dump(cpkt, pkt_len, "Received packet");
 
-        rv = asft_packet_decrypt(&pkt, cpkt, pkt_len, mkey);
+        rv = asft_packet_decrypt(&pkt, cpkt, pkt_len, &mkey);
         if (rv || !pkt) {
             fprintf(stderr, "Decryption failed\n");
             continue;

@@ -12,8 +12,8 @@
 
 #include "asft_gateway.h"
 
-static unsigned char mkey[ASFT_KEY_LEN];
-static unsigned char skey[ASFT_KEY_LEN];
+static struct asft_key mkey;
+static struct asft_key skey;
 static uint32_t packet_number = 0;
 static struct asft_ecdh *ecdh = NULL;
 
@@ -25,10 +25,10 @@ static void process_resp_ecdh(struct asft_cmd_ecdh *resp, size_t resp_len)
     if (resp_len != sizeof(*resp))
         goto error;
 
-    if (asft_ecdh_process(&ecdh, resp->public_key, skey))
+    if (asft_ecdh_process(&ecdh, resp->public_key, &skey))
         goto error;
 
-    asft_dump(skey, sizeof(skey), "Session key");
+    asft_dump(&skey, sizeof(skey), "Session key");
 
     return;
 
@@ -43,8 +43,8 @@ int asft_gateway_loop()
 {
     asft_packet *cpkt = NULL;
 
-    memset(mkey, 0xaa, sizeof(mkey));
-    getrandom(skey, sizeof(skey), 0);
+    asft_kdf(&mkey, "123");
+    getrandom(&skey, sizeof(skey), 0);
 
     while(1)
     {
@@ -54,7 +54,7 @@ int asft_gateway_loop()
         asft_packet *resp = NULL;
         size_t pkt_len = sizeof(pkt);
         uint64_t timeout;
-        struct asft_base_hdr *h, *dh;
+        struct asft_base_hdr *dh;
         bool got_response;
         uint32_t rx_packet_number;
 
@@ -71,7 +71,7 @@ int asft_gateway_loop()
 
         asft_dump(&pkt, sizeof(pkt), "Prepared packet");
 
-        rv = asft_packet_encrypt(&cpkt, &pkt, pkt_len, mkey);
+        rv = asft_packet_encrypt(&cpkt, &pkt, pkt_len, &mkey);
         if (rv || !cpkt) {
             fprintf(stderr, "Cannot encrypt packet\n");
             return 1;
@@ -98,14 +98,7 @@ int asft_gateway_loop()
 
             asft_dump(cresp, pkt_len, "Received response");
 
-            h = &cresp->base;
-            rx_packet_number = be32toh(h->packet_number);
-            if (rx_packet_number != packet_number + 1) {
-                fprintf(stderr, "Wrong packet number %u - expected %u\n", rx_packet_number, packet_number + 1);
-                continue;
-            }
-
-            if (asft_packet_decrypt(&resp, cresp, pkt_len, mkey)) {
+            if (asft_packet_decrypt(&resp, cresp, pkt_len, &mkey)) {
                 fprintf(stderr, "Response decryption failed\n");
                 continue;
             }
@@ -113,6 +106,12 @@ int asft_gateway_loop()
             asft_dump(resp, pkt_len, "Decrypted response");
 
             dh = &resp->base;
+            rx_packet_number = be32toh(dh->packet_number);
+            if (rx_packet_number != packet_number + 1) {
+                fprintf(stderr, "Wrong packet number %u - expected %u\n", rx_packet_number, packet_number + 1);
+                continue;
+            }
+
             switch (dh->command)
             {
                 case ASFT_RSP_ECDH_KEY:
