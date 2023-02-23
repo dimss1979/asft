@@ -13,6 +13,7 @@ struct asft_key {
 };
 
 size_t asft_crypto_init();
+int asft_crypto_set_network_name(char *new_network_name);
 
 int asft_ecdh_prepare(
     struct asft_ecdh **ecdh,

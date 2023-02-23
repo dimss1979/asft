@@ -2,6 +2,7 @@
 #include <string.h>
 #include <sys/random.h>
 #include <endian.h>
+#include <stdlib.h>
 
 #include "asft_proto.h"
 #include "asft_crypto.h"
@@ -10,9 +11,34 @@
 
 #include "asft_node.h"
 
-static struct asft_ecdh *ecdh = NULL;
-static struct asft_key mkey;
-static struct asft_key skey;
+static struct gateway
+{
+    char *label;
+    char *password;
+
+    struct asft_key ikey;
+    struct asft_key skey;
+    struct asft_ecdh *ecdh;
+} gw = { 0 };
+
+static int gateway_init()
+{
+    if (!gw.label || !gw.password) {
+        fprintf(stderr, "Gateway not specified\n");
+        goto error;
+    }
+    if(asft_kdf(&gw.ikey, gw.password)) {
+        fprintf(stderr, "Gateway '%s' initial key derivation failed\n", gw.label);
+        goto error;
+    };
+    getrandom(&gw.skey, sizeof(gw.skey), 0);
+
+    return 0;
+
+error:
+
+    return -1;
+}
 
 static void process_req_ecdh(struct asft_cmd_ecdh *req, size_t req_len)
 {
@@ -24,20 +50,20 @@ static void process_req_ecdh(struct asft_cmd_ecdh *req, size_t req_len)
     if (req_len != sizeof(*req))
         goto error;
 
-    if (asft_ecdh_prepare(&ecdh, resp.public_key))
+    if (asft_ecdh_prepare(&gw.ecdh, resp.public_key))
         goto error;
 
-    if (asft_ecdh_process(&ecdh, req->public_key, &skey))
+    if (asft_ecdh_process(&gw.ecdh, req->public_key, &gw.skey))
         goto error;
 
-    asft_dump(&skey, sizeof(skey), "Session key");
+    asft_dump(&gw.skey, sizeof(gw.skey), "Session key");
 
     resp.base.packet_number = htobe32(be32toh(req->base.packet_number) + 1);
     resp.base.command = ASFT_RSP_ECDH_KEY;
 
     asft_dump(&resp, sizeof(resp), "Prepared ECDH response");
 
-    if (asft_packet_encrypt(&cpkt, &resp, sizeof(resp), &mkey))
+    if (asft_packet_encrypt(&cpkt, &resp, sizeof(resp), &gw.ikey))
         goto error;
 
     asft_dump(cpkt, sizeof(resp), "Encrypted ECDH response");
@@ -54,10 +80,34 @@ error:
     return;
 }
 
+int asft_node_set_gateway(char *label, char *password)
+{
+    gw.label = strdup(label);
+    if (!gw.label)
+        goto error;
+
+    gw.password = strdup(password);
+    if (!gw.password)
+        goto error;
+
+    return 0;
+
+error:
+
+    if (gw.label)
+        free(gw.label);
+    if (gw.password)
+        free(gw.password);
+
+    return -1;
+}
+
 int asft_node_loop()
 {
-    asft_kdf(&mkey, "123");
-    getrandom(&skey, sizeof(skey), 0);
+    if (gateway_init()) {
+        fprintf(stderr, "Gateway initialization failed\n");
+        return 1;
+    }
 
     while (1) {
         int rv = 0;
@@ -77,7 +127,7 @@ int asft_node_loop()
 
         asft_dump(cpkt, pkt_len, "Received packet");
 
-        rv = asft_packet_decrypt(&pkt, cpkt, pkt_len, &mkey);
+        rv = asft_packet_decrypt(&pkt, cpkt, pkt_len, &gw.ikey);
         if (rv || !pkt) {
             fprintf(stderr, "Decryption failed\n");
             continue;

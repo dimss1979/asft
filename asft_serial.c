@@ -189,6 +189,9 @@ int asft_serial_init(char *devname, char *baudrate_string, size_t pkt_len_max)
     }
     tcflush(p.fd, TCIOFLUSH);
 
+    printf("Serial port %s %s baud. Packet size %lu worst case MTU %lu.\n",
+           devname, baudrate_string, pkt_len_max, p.frame_len_max);
+
     return 0;
 
 error:

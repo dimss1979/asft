@@ -19,6 +19,7 @@ struct asft_ecdh {
 
 static asft_packet *g_pkt = NULL;
 static EVP_CIPHER_CTX *g_ctx = NULL;
+static char *network_name = NULL;
 
 static void asft_crypto_cleanup()
 {
@@ -78,12 +79,29 @@ size_t asft_crypto_init()
         goto error;
     }
 
+    if (!network_name) {
+        fprintf(stderr, "Network name not specified\n");
+        goto error;
+    }
+
     return 0;
 
 error:
 
     asft_crypto_cleanup();
 
+    return -1;
+}
+
+int asft_crypto_set_network_name(char *new_network_name)
+{
+    if (network_name) {
+        free(network_name);
+    }
+    network_name = strdup(new_network_name);
+    if (network_name) {
+        return 0;
+    }
     return -1;
 }
 
@@ -307,8 +325,26 @@ int asft_kdf(
     char *password
 ) {
     unsigned int md_size;
+    EVP_MD_CTX *mdctx = NULL;
+    int rv = 1;
 
-    if (EVP_Digest(password, strlen(password), key->inner, &md_size, EVP_sha3_256(), NULL) != 1)
+    if (!network_name || !password)
+        goto error;
+
+    mdctx = EVP_MD_CTX_new();
+    if (!mdctx)
+        goto error;
+
+    if (!EVP_DigestInit_ex(mdctx, EVP_sha3_256(), NULL))
+        goto error;
+
+    if (!EVP_DigestUpdate(mdctx, password, strlen(password)))
+        goto error;
+
+    if (!EVP_DigestUpdate(mdctx, network_name, strlen(network_name)))
+        goto error;
+
+    if (!EVP_DigestFinal_ex(mdctx, key->inner, &md_size))
         goto error;
 
     if (md_size != ASFT_KEY_LEN)
@@ -317,9 +353,12 @@ int asft_kdf(
     if (derive_outer_key(key->outer, key->inner))
         goto error;
 
-    return 0;
+    rv = 0;
 
 error:
 
-    return 1;
+    if (mdctx)
+        EVP_MD_CTX_free(mdctx);
+
+    return rv;
 }

@@ -4,6 +4,7 @@
 #include <endian.h>
 #include <sys/random.h>
 #include <stdbool.h>
+#include <stdlib.h>
 
 #include "asft_proto.h"
 #include "asft_crypto.h"
@@ -12,23 +13,64 @@
 
 #include "asft_gateway.h"
 
-static struct asft_key mkey;
-static struct asft_key skey;
-static uint32_t packet_number = 0;
-static struct asft_ecdh *ecdh = NULL;
+struct node
+{
+    struct node *next;
+    char *label;
+    char *password;
 
+    struct asft_key ikey;
+    struct asft_key skey;
+    struct asft_ecdh *ecdh;
+    uint32_t packet_number;
+};
 
-static void process_resp_ecdh(struct asft_cmd_ecdh *resp, size_t resp_len)
+static struct node *node_first = NULL;
+static unsigned int node_cnt = 0;
+
+static int retries = 5;
+static int retry_timeout = 5;
+static int pause_idle = 10;
+static int pause_error = 10;
+
+static int nodes_init()
+{
+    struct node *n;
+
+    if (!node_cnt) {
+        fprintf(stderr, "No nodes configured\n");
+        goto error;
+    }
+
+    n = node_first;
+    while (n) {
+        if (asft_kdf(&n->ikey, n->password)) {
+            fprintf(stderr, "Node '%s' initial key derivation failed\n", n->label);
+            goto error;
+        }
+        getrandom(&n->skey, sizeof(n->skey), 0);
+
+        n = n->next;
+    }
+
+    return 0;
+
+error:
+
+    return -1;
+}
+
+static void process_resp_ecdh(struct node *n, struct asft_cmd_ecdh *resp, size_t resp_len)
 {
     printf("Processing ECDH response\n");
 
     if (resp_len != sizeof(*resp))
         goto error;
 
-    if (asft_ecdh_process(&ecdh, resp->public_key, &skey))
+    if (asft_ecdh_process(&n->ecdh, resp->public_key, &n->skey))
         goto error;
 
-    asft_dump(&skey, sizeof(skey), "Session key");
+    asft_dump(&n->skey, sizeof(n->skey), "Session key");
 
     return;
 
@@ -39,12 +81,73 @@ error:
     return;
 }
 
+void asft_gateway_set_retries(int new_retries)
+{
+    retries = new_retries;
+}
+
+void asft_gateway_set_retry_timeout(int new_timeout)
+{
+    retry_timeout = new_timeout;
+}
+
+void asft_gateway_set_pause_idle(int new_pause_idle)
+{
+    pause_idle = new_pause_idle;
+}
+
+void asft_gateway_set_pause_error(int new_pause_error)
+{
+    pause_error = new_pause_error;
+}
+
+int asft_gateway_add_node(char *label, char *password)
+{
+    struct node *new;
+
+    new = malloc(sizeof(*new));
+    if (!new)
+        goto error;
+    memset(new, 0, sizeof(*new));
+
+    new->label = strdup(label);
+    if (!new->label)
+        goto error;
+
+    new->password = strdup(password);
+    if (!new->password)
+        goto error;
+
+    new->next = node_first;
+    node_first = new;
+    node_cnt++;
+
+    return 0;
+
+error:
+
+    if (new) {
+        if (new->label)
+            free(new->label);
+        if (new->password)
+            free(new->password);
+        free(new);
+    }
+
+    return -1;
+}
+
 int asft_gateway_loop()
 {
     asft_packet *cpkt = NULL;
+    struct node *n;
 
-    asft_kdf(&mkey, "123");
-    getrandom(&skey, sizeof(skey), 0);
+    if (nodes_init()) {
+        fprintf(stderr, "Node initialization failed\n");
+        return 1;
+    }
+
+    n = node_first;
 
     while(1)
     {
@@ -58,20 +161,20 @@ int asft_gateway_loop()
         bool got_response;
         uint32_t rx_packet_number;
 
-        getrandom(&packet_number, sizeof(packet_number), 0);
+        getrandom(&n->packet_number, sizeof(n->packet_number), 0);
         memset(&pkt, 0, pkt_len);
         pkt.base.command = ASFT_REQ_ECDH_KEY;
-        pkt.base.packet_number = htobe32(packet_number);
+        pkt.base.packet_number = htobe32(n->packet_number);
         memset(&pkt.base.tag, 0xaa, sizeof(pkt.base.tag));
 
-        if (asft_ecdh_prepare(&ecdh, pkt.public_key)) {
+        if (asft_ecdh_prepare(&n->ecdh, pkt.public_key)) {
             fprintf(stderr, "Cannot prepare ECDH\n");
             return 1;
         }
 
         asft_dump(&pkt, sizeof(pkt), "Prepared packet");
 
-        rv = asft_packet_encrypt(&cpkt, &pkt, pkt_len, &mkey);
+        rv = asft_packet_encrypt(&cpkt, &pkt, pkt_len, &n->ikey);
         if (rv || !cpkt) {
             fprintf(stderr, "Cannot encrypt packet\n");
             return 1;
@@ -85,7 +188,7 @@ int asft_gateway_loop()
         }
 
         got_response = false;
-        timeout = asft_now() + 3000;
+        timeout = asft_now() + retry_timeout * 1000;
         while(timeout > asft_now() && !got_response) {
             rv = asft_serial_receive((unsigned char**) &cresp, &pkt_len);
             if (rv < 0) {
@@ -98,7 +201,7 @@ int asft_gateway_loop()
 
             asft_dump(cresp, pkt_len, "Received response");
 
-            if (asft_packet_decrypt(&resp, cresp, pkt_len, &mkey)) {
+            if (asft_packet_decrypt(&resp, cresp, pkt_len, &n->ikey)) {
                 fprintf(stderr, "Response decryption failed\n");
                 continue;
             }
@@ -107,15 +210,15 @@ int asft_gateway_loop()
 
             dh = &resp->base;
             rx_packet_number = be32toh(dh->packet_number);
-            if (rx_packet_number != packet_number + 1) {
-                fprintf(stderr, "Wrong packet number %u - expected %u\n", rx_packet_number, packet_number + 1);
+            if (rx_packet_number != n->packet_number + 1) {
+                fprintf(stderr, "Wrong packet number %u - expected %u\n", rx_packet_number, n->packet_number + 1);
                 continue;
             }
 
             switch (dh->command)
             {
                 case ASFT_RSP_ECDH_KEY:
-                    process_resp_ecdh(&resp->ecdh, pkt_len);
+                    process_resp_ecdh(n, &resp->ecdh, pkt_len);
                     break;
                 default:
                     fprintf(stderr, "Unknown command %x\n", dh->command);
@@ -123,7 +226,7 @@ int asft_gateway_loop()
             got_response = true;
         };
 
-        sleep(3);
+        sleep(pause_idle);
     }
 
     return 0;
