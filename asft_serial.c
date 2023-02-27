@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
+#include "asft_misc.h"
+
 #include "asft_serial.h"
 
 #define HDLC_FLAG_BYTE 0x7e
@@ -130,25 +132,25 @@ int asft_serial_init(char *devname, char *baudrate_string, size_t pkt_len_max)
 
     p.pkt_rx_buf = malloc(pkt_len_max + 1 /* CRC8 */);
     if (!p.pkt_rx_buf) {
-        fprintf(stderr, "Serial input packet buffer allocation failed\n");
+        asft_error("Serial input packet buffer allocation failed\n");
         goto error;
     }
 
     p.frame_tx_buf = malloc(p.frame_len_max);
     if (!p.frame_tx_buf) {
-        fprintf(stderr, "Serial output frame buffer allocation failed\n");
+        asft_error("Serial output frame buffer allocation failed\n");
         goto error;
     }
 
     speed_t baudrate = string_to_baudrate(baudrate_string);
     if (baudrate == B0) {
-        fprintf(stderr, "Wrong serial port speed: %s\n", baudrate_string);
+        asft_error("Wrong serial port speed: %s\n", baudrate_string);
         goto error;
     }
 
     p.fd = open(devname, O_RDWR | O_NOCTTY);
     if (p.fd < 0) {
-        fprintf(stderr, "Cannot open serial port\n");
+        asft_error("Cannot open serial port\n");
         goto error;
     }
 
@@ -168,7 +170,7 @@ int asft_serial_init(char *devname, char *baudrate_string, size_t pkt_len_max)
     t.c_cflag &= ~CRTSCTS;
     t.c_iflag &= ~(IGNBRK|BRKINT|PARMRK|ISTRIP|INLCR|IGNCR|ICRNL);
     if (tcsetattr(p.fd, TCSANOW, &t) != 0) {
-        fprintf(stderr, "Cannot set serial port attributes\n");
+        asft_error("Cannot set serial port attributes\n");
         goto error;
     }
     tcflush(p.fd, TCIOFLUSH);
@@ -184,12 +186,12 @@ int asft_serial_init(char *devname, char *baudrate_string, size_t pkt_len_max)
     usleep(10000);
     p.fd = open(devname, O_RDWR | O_NOCTTY);
     if (p.fd < 0) {
-        fprintf(stderr, "Cannot reopen serial port\n");
+        asft_error("Cannot reopen serial port\n");
         goto error;
     }
     tcflush(p.fd, TCIOFLUSH);
 
-    printf("Serial port %s %s baud. Packet size %lu worst case MTU %lu.\n",
+    asft_info("Serial port %s %s baud. Packet size %lu worst case MTU %lu.\n",
            devname, baudrate_string, pkt_len_max, p.frame_len_max);
 
     return 0;
@@ -226,7 +228,7 @@ int asft_serial_send(unsigned char *pkt, size_t pkt_len)
             pos += bytes_written;
             bytes_remaining -= bytes_written;
         } else if (bytes_written < 0 && bytes_written != -EINTR) {
-            fprintf(stderr, "Serial port write error\n");
+            asft_error("Serial port write error\n");
             asft_serial_cleanup();
             return -EIO;
         }
@@ -257,7 +259,7 @@ again:
     if(p.bytes_read == -EINTR) {
         goto again;
     } else if (p.bytes_read < 0) {
-        fprintf(stderr, "Serial port read error\n");
+        asft_error("Serial port read error\n");
         asft_serial_cleanup();
         return -EIO;
     }
@@ -274,7 +276,7 @@ hdlc_decode:
             p.pkt_len = 0;
             p.crc8_local = 0;
         } else if (c == HDLC_FLAG_BYTE && p.hdlc_state == HDLC_ESC) {
-            fprintf(stderr, "HDLC framing error - flag after escape\n");
+            asft_debug("HDLC framing error - flag after escape\n");
             p.hdlc_state = HDLC_IDLE;
             p.pkt_len = 0;
             p.crc8_local = 0;
@@ -289,7 +291,7 @@ hdlc_decode:
                     p.crc8_local = 0;
                     return 1;
                 } else {
-                    fprintf(stderr, "HDLC frame CRC mismatch\n");
+                    asft_debug("HDLC frame CRC mismatch\n");
                     p.hdlc_state = HDLC_IDLE;
                     p.pkt_len = 0;
                     p.crc8_local = 0;
@@ -308,7 +310,7 @@ hdlc_decode:
                 p.hdlc_state = HDLC_NORM;
             }
             if (p.pkt_len > p.pkt_len_max) {
-                fprintf(stderr, "HDLC framing error - frame too long\n");
+                asft_debug("HDLC framing error - frame too long\n");
                 p.hdlc_state = HDLC_IDLE;
                 p.pkt_len = 0;
                 p.crc8_local = 0;

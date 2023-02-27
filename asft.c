@@ -10,6 +10,7 @@
 #include "asft_crypto.h"
 #include "asft_node.h"
 #include "asft_gateway.h"
+#include "asft_misc.h"
 
 enum op_mode {
     OM_UNKNOWN,
@@ -29,7 +30,7 @@ static int read_config_file(char *filename)
 
     f = fopen(filename, "r");
     if (!f) {
-        fprintf(stderr, "Cannot open file\n");
+        asft_error("Cannot open file\n");
         goto error;
     }
 
@@ -41,10 +42,17 @@ static int read_config_file(char *filename)
 
         if (token[0] == '#') {
             continue;
+        } else if (!strcmp(token, "debug")) {
+            char *debug = strtok(NULL, delimiters);
+            if (!debug) {
+                asft_error("No debug level specified on line %i\n", line_number);
+                goto error;
+            }
+            asft_set_debug(atoi(debug));
         } else if (!strcmp(token, "mode")) {
             char *mode = strtok(NULL, delimiters);
             if (!mode) {
-                fprintf(stderr, "No mode specified on line %i\n", line_number);
+                asft_error("No mode specified on line %i\n", line_number);
                 goto error;
             }
             if (!strcmp(mode, "gateway")) {
@@ -52,94 +60,94 @@ static int read_config_file(char *filename)
             } else if (!strcmp(mode, "node")) {
                 op_mode = OM_NODE;
             } else {
-                fprintf(stderr, "Invalid mode on line %i: %s\n", line_number, mode);
+                asft_error("Invalid mode on line %i: %s\n", line_number, mode);
                 goto error;
             }
         } else if (!strcmp(token, "network")) {
             char *network_name = strtok(NULL, delimiters);
             if (!network_name) {
-                fprintf(stderr, "No network name specified on line %i\n", line_number);
+                asft_error("No network name specified on line %i\n", line_number);
                 goto error;
             }
             if (asft_crypto_set_network_name(network_name)) {
-                fprintf(stderr, "Cannot set network name on line %i\n", line_number);
+                asft_error("Cannot set network name on line %i\n", line_number);
                 goto error;
             }
         } else if (!strcmp(token, "port")) {
             char *device_name = strtok(NULL, delimiters);
             if (!device_name) {
-                fprintf(stderr, "No serial device name specified on line %i\n", line_number);
+                asft_error("No serial device name specified on line %i\n", line_number);
                 goto error;
             }
             char *baudrate = strtok(NULL, delimiters);
             if (!baudrate) {
-                fprintf(stderr, "No baudrate specified on line %i\n", line_number);
+                asft_error("No baudrate specified on line %i\n", line_number);
                 goto error;
             }
             if (asft_serial_init(device_name, baudrate, sizeof(asft_packet))) {
-                fprintf(stderr, "Cannot initialize serial port on line %i\n", line_number);
+                asft_error("Cannot initialize serial port on line %i\n", line_number);
                 goto error;
             }
         } else if (!strcmp(token, "retries")) {
             char *retries = strtok(NULL, delimiters);
             if (!retries) {
-                fprintf(stderr, "No retry count specified on line %i\n", line_number);
+                asft_error("No retry count specified on line %i\n", line_number);
                 goto error;
             }
             asft_gateway_set_retries(atoi(retries));
         } else if (!strcmp(token, "retry_timeout")) {
             char *retry_timeout = strtok(NULL, delimiters);
             if (!retry_timeout) {
-                fprintf(stderr, "No retry timeout specified on line %i\n", line_number);
+                asft_error("No retry timeout specified on line %i\n", line_number);
                 goto error;
             }
             asft_gateway_set_retry_timeout(atoi(retry_timeout));
         } else if (!strcmp(token, "pause_idle")) {
             char *pause_idle = strtok(NULL, delimiters);
             if (!pause_idle) {
-                fprintf(stderr, "No idle pause specified on line %i\n", line_number);
+                asft_error("No idle pause specified on line %i\n", line_number);
                 goto error;
             }
             asft_gateway_set_pause_idle(atoi(pause_idle));
         } else if (!strcmp(token, "pause_error")) {
             char *pause_error = strtok(NULL, delimiters);
             if (!pause_error) {
-                fprintf(stderr, "No error pause specified on line %i\n", line_number);
+                asft_error("No error pause specified on line %i\n", line_number);
                 goto error;
             }
             asft_gateway_set_pause_error(atoi(pause_error));
         } else if (!strcmp(token, "node")) {
             char *label = strtok(NULL, delimiters);
             if (!label) {
-                fprintf(stderr, "Node label not specified on line %i\n", line_number);
+                asft_error("Node label not specified on line %i\n", line_number);
                 goto error;
             }
             char *password = strtok(NULL, delimiters);
             if (!password) {
-                fprintf(stderr, "Node password not specified on line %i\n", line_number);
+                asft_error("Node password not specified on line %i\n", line_number);
                 goto error;
             }
             if (asft_gateway_add_node(label, password)) {
-                fprintf(stderr, "Cannot add node on line %i\n", line_number);
+                asft_error("Cannot add node on line %i\n", line_number);
                 goto error;
             }
         } else if (!strcmp(token, "gateway")) {
             char *label = strtok(NULL, delimiters);
             if (!label) {
-                fprintf(stderr, "Gateway label not specified on line %i\n", line_number);
+                asft_error("Gateway label not specified on line %i\n", line_number);
                 goto error;
             }
             char *password = strtok(NULL, delimiters);
             if (!password) {
-                fprintf(stderr, "Gateway password not specified on line %i\n", line_number);
+                asft_error("Gateway password not specified on line %i\n", line_number);
                 goto error;
             }
             if (asft_node_set_gateway(label, password)) {
-                fprintf(stderr, "Cannot set gateway on line %i\n", line_number);
+                asft_error("Cannot set gateway on line %i\n", line_number);
                 goto error;
             }
         } else {
-            fprintf(stderr, "Unknown option on line %i: %s\n", line_number, token);
+            asft_error("Unknown option on line %i: %s\n", line_number, token);
             goto error;
         }
     }
@@ -159,17 +167,17 @@ int main(int argc, char **argv)
     int rv = 0;
 
     if (argc < 2) {
-        fprintf(stderr, "Usage: asft <config_file>\n");
+        asft_error("Usage: asft <config_file>\n");
         return 1;
     }
 
     if (read_config_file(argv[1])) {
-        fprintf(stderr, "Error while reading configuration file\n");
+        asft_error("Error while reading configuration file\n");
         return 1;
     }
 
     if (asft_crypto_init()) {
-        fprintf(stderr, "Cannot initialize crypto\n");
+        asft_error("Cannot initialize crypto\n");
         return 1;
     }
 
@@ -181,7 +189,7 @@ int main(int argc, char **argv)
             rv = asft_node_loop();
             break;
         default:
-            fprintf(stderr, "Operation mode not specified\n");
+            asft_error("Operation mode not specified\n");
             return 1;
     };
 

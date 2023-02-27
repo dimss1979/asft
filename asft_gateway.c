@@ -38,14 +38,14 @@ static int nodes_init()
     struct node *n;
 
     if (!node_cnt) {
-        fprintf(stderr, "No nodes configured\n");
+        asft_error("No nodes configured\n");
         goto error;
     }
 
     n = node_first;
     while (n) {
         if (asft_kdf(&n->ikey, n->password)) {
-            fprintf(stderr, "Node '%s' initial key derivation failed\n", n->label);
+            asft_error("Node '%s' initial key derivation failed\n", n->label);
             goto error;
         }
         getrandom(&n->skey, sizeof(n->skey), 0);
@@ -62,7 +62,7 @@ error:
 
 static void process_resp_ecdh(struct node *n, struct asft_cmd_ecdh *resp, size_t resp_len)
 {
-    printf("Processing ECDH response\n");
+    asft_debug("Processing ECDH response\n");
 
     if (resp_len != sizeof(*resp))
         goto error;
@@ -70,13 +70,13 @@ static void process_resp_ecdh(struct node *n, struct asft_cmd_ecdh *resp, size_t
     if (asft_ecdh_process(&n->ecdh, resp->public_key, &n->skey))
         goto error;
 
-    asft_dump(&n->skey, sizeof(n->skey), "Session key");
+    asft_debug_dump(&n->skey, sizeof(n->skey), "Session key");
 
     return;
 
 error:
 
-    fprintf(stderr, "Processing ECDH response failed\n");
+    asft_error("Processing ECDH response failed\n");
 
     return;
 }
@@ -143,7 +143,7 @@ int asft_gateway_loop()
     struct node *n;
 
     if (nodes_init()) {
-        fprintf(stderr, "Node initialization failed\n");
+        asft_error("Node initialization failed\n");
         return 1;
     }
 
@@ -168,22 +168,22 @@ int asft_gateway_loop()
         memset(&pkt.base.tag, 0xaa, sizeof(pkt.base.tag));
 
         if (asft_ecdh_prepare(&n->ecdh, pkt.public_key)) {
-            fprintf(stderr, "Cannot prepare ECDH\n");
+            asft_error("Cannot prepare ECDH\n");
             return 1;
         }
 
-        asft_dump(&pkt, sizeof(pkt), "Prepared packet");
+        asft_debug_dump(&pkt, sizeof(pkt), "Prepared packet");
 
         rv = asft_packet_encrypt(&cpkt, &pkt, pkt_len, &n->ikey);
         if (rv || !cpkt) {
-            fprintf(stderr, "Cannot encrypt packet\n");
+            asft_error("Cannot encrypt packet\n");
             return 1;
         }
-        asft_dump(cpkt, pkt_len, "Encrypted packet");
+        asft_debug_dump(cpkt, pkt_len, "Encrypted packet");
 
         rv = asft_serial_send((unsigned char*) cpkt, pkt_len);
         if (rv < 0) {
-            fprintf(stderr, "Cannot send packet\n");
+            asft_error("Cannot send packet\n");
             return 1;
         }
 
@@ -192,26 +192,26 @@ int asft_gateway_loop()
         while(timeout > asft_now() && !got_response) {
             rv = asft_serial_receive((unsigned char**) &cresp, &pkt_len);
             if (rv < 0) {
-                fprintf(stderr, "Cannot receive response\n");
+                asft_error("Cannot receive response\n");
                 return 1;
             }
 
             if (!cresp)
                 continue;
 
-            asft_dump(cresp, pkt_len, "Received response");
+            asft_debug_dump(cresp, pkt_len, "Received response");
 
             if (asft_packet_decrypt(&resp, cresp, pkt_len, &n->ikey)) {
-                fprintf(stderr, "Response decryption failed\n");
+                asft_debug("Response decryption failed\n");
                 continue;
             }
 
-            asft_dump(resp, pkt_len, "Decrypted response");
+            asft_debug_dump(resp, pkt_len, "Decrypted response");
 
             dh = &resp->base;
             rx_packet_number = be32toh(dh->packet_number);
             if (rx_packet_number != n->packet_number + 1) {
-                fprintf(stderr, "Wrong packet number %u - expected %u\n", rx_packet_number, n->packet_number + 1);
+                asft_error("Wrong packet number %u - expected %u\n", rx_packet_number, n->packet_number + 1);
                 continue;
             }
 
@@ -221,7 +221,7 @@ int asft_gateway_loop()
                     process_resp_ecdh(n, &resp->ecdh, pkt_len);
                     break;
                 default:
-                    fprintf(stderr, "Unknown command %x\n", dh->command);
+                    asft_error("Unknown command %x\n", dh->command);
             }
             got_response = true;
         };

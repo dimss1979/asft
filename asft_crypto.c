@@ -7,6 +7,7 @@
 #include <openssl/evp.h>
 
 #include "asft_proto.h"
+#include "asft_misc.h"
 
 #include "asft_crypto.h"
 
@@ -69,18 +70,18 @@ size_t asft_crypto_init()
 
     g_pkt = malloc(sizeof(*g_pkt));
     if (!g_pkt) {
-        fprintf(stderr, "Cannot allocate temporary packet buffer\n");
+        asft_error("Cannot allocate temporary packet buffer\n");
         goto error;
     }
 
     g_ctx = EVP_CIPHER_CTX_new();
     if (!g_ctx) {
-        fprintf(stderr, "Cannot allocate OpenSSL cipher context\n");
+        asft_error("Cannot allocate OpenSSL cipher context\n");
         goto error;
     }
 
     if (!network_name) {
-        fprintf(stderr, "Network name not specified\n");
+        asft_error("Network name not specified\n");
         goto error;
     }
 
