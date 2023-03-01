@@ -40,12 +40,41 @@ static int retry_timeout = 5;
 static int pause_idle = 10;
 static int pause_error = 10;
 
-static void node_packet_number_reset(struct node *n)
+static void node_set_idle(struct node *n)
 {
-    if (n->cmd == ASFT_REQ_ECDH_KEY)
-        getrandom(&n->packet_number, sizeof(n->packet_number), 0);
-    else
-        n->packet_number = 0;
+    n->cmd = ASFT_REQ_ECDH_KEY;
+    getrandom(&n->packet_number, sizeof(n->packet_number), 0);
+    n->pause_until = 1000 * pause_idle + asft_now();
+    n->retry = 0;
+}
+
+static void node_set_error(struct node *n)
+{
+    n->cmd = ASFT_REQ_ECDH_KEY;
+    getrandom(&n->packet_number, sizeof(n->packet_number), 0);
+    n->pause_until = 1000 * pause_error + asft_now();
+    n->retry = 0;
+}
+
+static struct node *node_pick_next(struct node *cur)
+{
+    struct node *n = NULL;
+    uint64_t now = asft_now();
+
+    if (cur)
+        n = cur->next;
+
+    for (unsigned int i = 0; i < node_cnt; i++) {
+        if (!n)
+            n = node_first;
+
+        if (n->pause_until <= now)
+            return n;
+
+        n = n->next;
+    }
+
+    return NULL;
 }
 
 static int nodes_init()
@@ -66,10 +95,9 @@ static int nodes_init()
         getrandom(&n->skey, sizeof(n->skey), 0);
 
         n->cmd = ASFT_REQ_ECDH_KEY;
-        node_packet_number_reset(n);
-        n->retry = 0;
+        getrandom(&n->packet_number, sizeof(n->packet_number), 0);
         n->pause_until = 0;
-        n->pkt_len = 0;
+        n->retry = 0;
 
         n = n->next;
     }
@@ -79,61 +107,6 @@ static int nodes_init()
 error:
 
     return -1;
-}
-
-static void process_resp_ecdh(struct node *n, struct asft_cmd_ecdh *resp, size_t resp_len)
-{
-    asft_debug("Processing ECDH response\n");
-
-    if (resp_len != sizeof(*resp))
-        goto error;
-
-    if (asft_ecdh_process(&n->ecdh, resp->public_key, &n->skey))
-        goto error;
-
-    asft_debug_dump(&n->skey, sizeof(n->skey), "Session key");
-    n->cmd = ASFT_REQ_ECDH_KEY;
-    node_packet_number_reset(n);
-    n->pause_until = 1000 * pause_idle + asft_now();
-
-    return;
-
-error:
-
-    asft_error("Processing ECDH response failed\n");
-
-    return;
-}
-
-static struct node *pick_node()
-{
-    struct node *n = node_first;
-    uint64_t now = asft_now();
-
-    if (n->pause_until > now)
-        return NULL;
-
-    return n;
-}
-
-void asft_gateway_set_retries(int new_retries)
-{
-    retries = new_retries;
-}
-
-void asft_gateway_set_retry_timeout(int new_timeout)
-{
-    retry_timeout = new_timeout;
-}
-
-void asft_gateway_set_pause_idle(int new_pause_idle)
-{
-    pause_idle = new_pause_idle;
-}
-
-void asft_gateway_set_pause_error(int new_pause_error)
-{
-    pause_error = new_pause_error;
 }
 
 int asft_gateway_add_node(char *label, char *password)
@@ -172,8 +145,61 @@ error:
     return -1;
 }
 
+void asft_gateway_set_retries(int new_retries)
+{
+    retries = new_retries;
+}
+
+void asft_gateway_set_retry_timeout(int new_timeout)
+{
+    retry_timeout = new_timeout;
+}
+
+void asft_gateway_set_pause_idle(int new_pause_idle)
+{
+    pause_idle = new_pause_idle;
+}
+
+void asft_gateway_set_pause_error(int new_pause_error)
+{
+    pause_error = new_pause_error;
+}
+
+static void process_resp_ecdh(struct node *n, struct asft_cmd_ecdh *resp, size_t resp_len)
+{
+    asft_debug("Processing ECDH response\n");
+
+    if (resp_len != sizeof(*resp))
+        goto error;
+
+    if (asft_ecdh_process(&n->ecdh, resp->public_key, &n->skey))
+        goto error;
+
+    asft_debug_dump(&n->skey, sizeof(n->skey), "Session key");
+    node_set_idle(n);
+
+    return;
+
+error:
+
+    asft_error("Processing ECDH response failed\n");
+
+    return;
+}
+
 int asft_gateway_loop()
 {
+    int rv;
+    struct node *n = NULL;
+    asft_packet *cpkt = NULL;
+    uint64_t timeout;
+    asft_packet *cresp = NULL;
+    asft_packet *resp = NULL;
+    struct asft_base_hdr *dh;
+    bool got_response;
+    uint32_t rx_packet_number;
+    size_t rx_packet_len;
+
     if (nodes_init()) {
         asft_error("Node initialization failed\n");
         return 1;
@@ -181,29 +207,21 @@ int asft_gateway_loop()
 
     while(1)
     {
-        int rv;
-        struct node *n;
-        asft_packet *cpkt = NULL;
-        uint64_t timeout;
-        asft_packet *cresp = NULL;
-        asft_packet *resp = NULL;
-        struct asft_base_hdr *dh;
-        bool got_response;
-        uint32_t rx_packet_number;
-        size_t rx_packet_len;
-
-        n = pick_node(n);
+        n = node_pick_next(n);
 
         if (n) {
             n->pkt.base.packet_number = htobe32(n->packet_number);
             n->packet_number += 2;
 
-            if (!n->retry) {
+            if (n->retry) {
+                asft_debug("Node '%s' retry %u\n", n->label, n->retry);
+            } else {
                 n->pkt.base.command = n->cmd;
 
                 switch(n->cmd)
                 {
                     case ASFT_REQ_ECDH_KEY:
+                        asft_info("Node '%s' key exchange\n", n->label);
                         if (asft_ecdh_prepare(&n->ecdh, n->pkt.ecdh.public_key)) {
                             asft_error("Cannot prepare ECDH\n");
                             return 1;
@@ -283,10 +301,7 @@ int asft_gateway_loop()
             asft_debug("No response\n");
             if (n->retry >= retries) {
                 asft_error("Node '%s' timeout\n", n->label);
-                n->retry = 0;
-                n->pause_until = 1000 * pause_error + asft_now();
-                n->cmd = ASFT_REQ_ECDH_KEY;
-                node_packet_number_reset(n);
+                node_set_error(n);
             }
         }
     }
