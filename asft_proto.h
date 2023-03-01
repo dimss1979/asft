@@ -28,7 +28,11 @@ typedef union _asft_packet {
 
 enum asft_command {
     ASFT_REQ_ECDH_KEY = 0,
+    ASFT_REQ_GET_FILE = 1,
     ASFT_RSP_ECDH_KEY = 128,
+    ASFT_RSP_GET_FILE_ACK = 129,
+    ASFT_RSP_GET_FILE_NAK = 130,
+    ASFT_RSP_ERROR = 255
 };
 
 #endif /* _ASFT_PROTO_H_ */
