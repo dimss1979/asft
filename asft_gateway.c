@@ -168,8 +168,6 @@ void asft_gateway_set_pause_error(int new_pause_error)
 
 static void process_resp_ecdh(struct node *n, struct asft_cmd_ecdh *resp, size_t resp_len)
 {
-    asft_debug("Processing ECDH response\n");
-
     if (resp_len != sizeof(*resp))
         goto error;
 
@@ -179,16 +177,17 @@ static void process_resp_ecdh(struct node *n, struct asft_cmd_ecdh *resp, size_t
     if (asft_ecdh_process(&n->ecdh, resp->public_key, &n->skey))
         goto error;
 
-    asft_debug_dump(&n->skey, sizeof(n->skey), "Session key");
     n->cmd = ASFT_REQ_GET_FILE;
     n->packet_number = 0;
     n->ckey = &n->skey;
+
+    asft_info("Node '%s' session key exchange complete\n", n->label);
 
     return;
 
 error:
 
-    asft_error("Node '%s' processing ECDH response failed\n", n->label);
+    asft_error("Node '%s' session key exchange failed\n", n->label);
     node_set_error(n);
 
     return;
@@ -196,8 +195,6 @@ error:
 
 static void process_resp_get_file_nak(struct node *n, struct asft_base_hdr *resp, size_t resp_len)
 {
-    asft_debug("Processing get file NAK\n");
-
     if (resp_len != sizeof(*resp))
         goto error;
 
@@ -205,12 +202,13 @@ static void process_resp_get_file_nak(struct node *n, struct asft_base_hdr *resp
         goto error;
 
     node_set_idle(n);
+    asft_debug("No-upload response complete\n");
 
     return;
 
 error:
 
-    asft_error("Node '%s' processing get file NAK failed\n", n->label);
+    asft_error("Node '%s' invalid no-upload response\n", n->label);
     node_set_error(n);
 
     return;
@@ -239,48 +237,45 @@ int asft_gateway_loop()
         n = node_pick_next(n);
 
         if (n) {
+            asft_debug("Picked node '%s' retry %u\n", n->label, n->retry);
             n->pkt.base.packet_number = htobe32(n->packet_number);
             n->packet_number += 2;
 
-            if (n->retry) {
-                asft_debug("Node '%s' retry %u\n", n->label, n->retry);
-            } else {
+            if (!n->retry) {
                 n->pkt.base.command = n->cmd;
 
                 switch(n->cmd)
                 {
                     case ASFT_REQ_ECDH_KEY:
-                        asft_info("Node '%s' key exchange\n", n->label);
+                        asft_info("Node '%s' session key exchange\n", n->label);
                         if (asft_ecdh_prepare(&n->ecdh, n->pkt.ecdh.public_key)) {
-                            asft_error("Cannot prepare ECDH\n");
+                            asft_error("Cannot prepare session key exchange\n");
                             return 1;
                         }
                         n->pkt_len = sizeof(n->pkt.ecdh);
                         n->ckey = &n->ikey;
                         break;
                     case ASFT_REQ_GET_FILE:
-                        asft_debug("Node '%s' get file\n", n->label);
+                        asft_debug("Node '%s' upload request\n", n->label);
                         n->pkt_len = sizeof(n->pkt.base);
                         break;
                     default:
-                        asft_error("Node '%s' unknown next command %i\n", n->label, n->cmd);
+                        asft_error("Node '%s' invalid command %i\n", n->label, n->cmd);
                         return 1;
                 }
             }
 
-            asft_debug_dump(&n->pkt, n->pkt_len, "Prepared packet");
-
             rv = asft_packet_encrypt(&cpkt, &n->pkt, n->pkt_len, n->ckey);
             if (rv || !cpkt) {
-                asft_error("Cannot encrypt packet\n");
+                asft_error("Node '%s' cannot encrypt packet\n", n->label);
                 return 1;
             }
 
-            asft_debug_dump(cpkt, n->pkt_len, "Encrypted packet");
+            asft_debug("Sending request %u bytes\n", n->pkt_len);
 
             rv = asft_serial_send((unsigned char*) cpkt, n->pkt_len);
             if (rv < 0) {
-                asft_error("Cannot send packet\n");
+                asft_error("Cannot send request\n");
                 return 1;
             }
 
@@ -300,22 +295,20 @@ int asft_gateway_loop()
             if (!cresp)
                 continue;
 
-            asft_debug_dump(cresp, rx_packet_len, "Received response");
+            asft_debug("Received %u bytes\n", rx_packet_len);
 
             if (!n)
                 continue;
 
             if (asft_packet_decrypt(&resp, cresp, rx_packet_len, n->ckey)) {
-                asft_debug("Response decryption failed\n");
+                asft_debug("Decryption failed\n");
                 continue;
             }
-
-            asft_debug_dump(resp, rx_packet_len, "Decrypted response");
 
             dh = &resp->base;
             rx_packet_number = be32toh(dh->packet_number);
             if (rx_packet_number != n->packet_number - 1) {
-                asft_error("Node '%s' sent wrong packet number %u - expected %u\n", n->label, rx_packet_number, n->packet_number + 1);
+                asft_error("Node '%s' packet number %u, expected %u\n", n->label, rx_packet_number, n->packet_number + 1);
                 continue;
             }
 
@@ -328,11 +321,11 @@ int asft_gateway_loop()
                     process_resp_get_file_nak(n, &resp->base, rx_packet_len);
                     break;
                 case ASFT_RSP_ERROR:
-                    asft_info("Node '%s' error\n", n->label);
+                    asft_info("Node '%s' indicating error\n", n->label);
                     node_set_error(n);
                     break;
                 default:
-                    asft_error("Node '%s' unknown response %u\n", n->label, dh->command);
+                    asft_error("Node '%s' invalid response %u\n", n->label, dh->command);
                     node_set_error(n);
             }
             got_response = true;

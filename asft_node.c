@@ -31,7 +31,7 @@ static int gateway_init()
         goto error;
     }
     if(asft_kdf(&gw.ikey, gw.password)) {
-        asft_error("Gateway '%s' initial key derivation failed\n", gw.label);
+        asft_error("Gateway initial key derivation failed\n");
         goto error;
     };
     getrandom(&gw.skey, sizeof(gw.skey), 0);
@@ -45,7 +45,7 @@ error:
 
 static void process_error(asft_packet *resp, size_t *resp_len)
 {
-    asft_error("Send error to gateway\n");
+    asft_error("Indicate error to gateway\n");
 
     resp->base.command = ASFT_RSP_ERROR;
     *resp_len = sizeof(resp->base);
@@ -55,8 +55,6 @@ static void process_error(asft_packet *resp, size_t *resp_len)
 
 static void process_req_ecdh(asft_packet *req, size_t req_len, asft_packet *resp, size_t *resp_len)
 {
-    asft_info("Key exchange\n");
-
     if (req_len != sizeof(req->ecdh))
         goto error;
 
@@ -66,16 +64,16 @@ static void process_req_ecdh(asft_packet *req, size_t req_len, asft_packet *resp
     if (asft_ecdh_process(&gw.ecdh, req->ecdh.public_key, &gw.tkey))
         goto error;
 
-    asft_debug_dump(&gw.tkey, sizeof(gw.tkey), "Session key");
-
     resp->base.command = ASFT_RSP_ECDH_KEY;
     *resp_len = sizeof(resp->ecdh);
+
+    asft_info("Session key exchange complete\n");
 
     return;
 
 error:
 
-    asft_error("Key exchange failed\n");
+    asft_error("Session key exchange failed\n");
     process_error(resp, resp_len);
 
     return;
@@ -83,19 +81,19 @@ error:
 
 static void process_req_get_file(asft_packet *req, size_t req_len, asft_packet *resp, size_t *resp_len)
 {
-    asft_debug("Get file\n");
-
     if (req_len != sizeof(req->base))
         goto error;
 
     resp->base.command = ASFT_RSP_GET_FILE_NAK;
     *resp_len = sizeof(resp->base);
 
+    asft_debug("Upload request complete\n");
+
     return;
 
 error:
 
-    asft_error("Get file failed\n");
+    asft_error("Upload request failed\n");
     process_error(resp, resp_len);
 
     return;
@@ -152,7 +150,7 @@ int asft_node_loop()
             continue;
         }
 
-        asft_debug_dump(cpkt, pkt_len, "Received packet");
+        asft_debug("Received %u bytes\n", pkt_len);
 
         rv = asft_packet_decrypt(&pkt, cpkt, pkt_len, &gw.skey);
         if (!rv && pkt) {
@@ -175,21 +173,21 @@ int asft_node_loop()
 
 decrypted:
 
-        asft_debug_dump(pkt, pkt_len, "Decrypted packet");
+        asft_debug("Decrypted using key %u\n", decryption_key);
 
         dh = &pkt->base;
 
         if (dh->command == ASFT_REQ_ECDH_KEY && decryption_key != D_IKEY) {
-            asft_error("Key exchange must use initial key\n");
+            asft_error("Key exchange must be encrypted with initial key\n");
             continue;
         } else if (dh->command != ASFT_REQ_GET_FILE && decryption_key == D_TKEY) {
-            asft_error("Only get file command is allowed to use temporary key\n");
+            asft_error("Command %u is encrypted with temporary key\n", dh->command);
             continue;
         }
 
         rx_packet_number = be32toh(pkt->base.packet_number);
         if (decryption_key == D_SKEY && rx_packet_number <= gw.last_packet_number) {
-            asft_error("Wrong packet number %u, last %u\n", rx_packet_number, gw.last_packet_number);
+            asft_error("Packet number %u, last was %u\n", rx_packet_number, gw.last_packet_number);
             continue;
         }
         if (decryption_key != D_IKEY) {
@@ -214,14 +212,13 @@ decrypted:
         }
 
         resp.base.packet_number = htobe32(rx_packet_number + 1);
-        asft_debug_dump(&resp, resp_len, "Prepared response");
 
         if (asft_packet_encrypt(&cresp, &resp, resp_len, ckey)) {
             asft_error("Response encryption failed\n");
             return 1;
         }
 
-        asft_debug_dump(cresp, resp_len, "Encrypted response");
+        asft_debug("Sending response %u bytes\n", resp_len);
 
         if (asft_serial_send((unsigned char*) cresp, resp_len) < 0) {
             asft_error("Cannot send response\n");

@@ -276,7 +276,7 @@ hdlc_decode:
             p.pkt_len = 0;
             p.crc8_local = 0;
         } else if (c == HDLC_FLAG_BYTE && p.hdlc_state == HDLC_ESC) {
-            asft_debug("HDLC framing error - flag after escape\n");
+            asft_debug("HDLC flag after escape\n");
             p.hdlc_state = HDLC_IDLE;
             p.pkt_len = 0;
             p.crc8_local = 0;
@@ -310,7 +310,7 @@ hdlc_decode:
                 p.hdlc_state = HDLC_NORM;
             }
             if (p.pkt_len > p.pkt_len_max) {
-                asft_debug("HDLC framing error - frame too long\n");
+                asft_debug("HDLC frame too long\n");
                 p.hdlc_state = HDLC_IDLE;
                 p.pkt_len = 0;
                 p.crc8_local = 0;
