@@ -128,6 +128,7 @@ int asft_node_loop()
         asft_error("Gateway initialization failed\n");
         return 1;
     }
+    asft_debug("Gateway initialized\n");
 
     while (1) {
         int rv = 0;

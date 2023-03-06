@@ -231,6 +231,7 @@ int asft_gateway_loop()
         asft_error("Node initialization failed\n");
         return 1;
     }
+    asft_debug("Nodes initialized\n");
 
     while(1)
     {

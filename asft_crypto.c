@@ -5,6 +5,7 @@
 #include <string.h>
 #include <sys/random.h>
 #include <openssl/evp.h>
+#include <openssl/kdf.h>
 
 #include "asft_proto.h"
 #include "asft_misc.h"
@@ -325,30 +326,33 @@ int asft_kdf(
     struct asft_key *key,
     char *password
 ) {
-    unsigned int md_size;
-    EVP_MD_CTX *mdctx = NULL;
     int rv = 1;
+    EVP_KDF *kdf;
+    EVP_KDF_CTX *kctx;
+    OSSL_PARAM params[6], *p = params;
+    uint64_t scrypt_n = 8192;
+    uint32_t scrypt_r = 8;
+    uint32_t scrypt_p = 1;
 
     if (!network_name || !password)
         goto error;
 
-    mdctx = EVP_MD_CTX_new();
-    if (!mdctx)
+    kdf = EVP_KDF_fetch(NULL, "SCRYPT", NULL);
+    if (!kdf)
         goto error;
 
-    if (!EVP_DigestInit_ex(mdctx, EVP_sha3_256(), NULL))
+    kctx = EVP_KDF_CTX_new(kdf);
+    if (!kctx)
         goto error;
 
-    if (!EVP_DigestUpdate(mdctx, password, strlen(password)))
-        goto error;
+    *p++ = OSSL_PARAM_construct_octet_string("pass", password, strlen(password));
+    *p++ = OSSL_PARAM_construct_octet_string("salt", network_name, strlen(network_name));
+    *p++ = OSSL_PARAM_construct_uint64("n", &scrypt_n);
+    *p++ = OSSL_PARAM_construct_uint32("r", &scrypt_r);
+    *p++ = OSSL_PARAM_construct_uint32("p", &scrypt_p);
+    *p = OSSL_PARAM_construct_end();
 
-    if (!EVP_DigestUpdate(mdctx, network_name, strlen(network_name)))
-        goto error;
-
-    if (!EVP_DigestFinal_ex(mdctx, key->inner, &md_size))
-        goto error;
-
-    if (md_size != ASFT_KEY_LEN)
+    if (EVP_KDF_derive(kctx, key->inner, sizeof(key->inner), params) <= 0)
         goto error;
 
     if (derive_outer_key(key->outer, key->inner))
@@ -358,8 +362,10 @@ int asft_kdf(
 
 error:
 
-    if (mdctx)
-        EVP_MD_CTX_free(mdctx);
+    if (kctx)
+        EVP_KDF_CTX_free(kctx);
+    if (kdf)
+        EVP_KDF_free(kdf);
 
     return rv;
 }
