@@ -327,8 +327,8 @@ int asft_kdf(
     char *password
 ) {
     int rv = 1;
-    EVP_KDF *kdf;
-    EVP_KDF_CTX *kctx;
+    EVP_KDF *kdf = NULL;
+    EVP_KDF_CTX *kctx = NULL;
     OSSL_PARAM params[6], *p = params;
     uint64_t scrypt_n = 8192;
     uint32_t scrypt_r = 8;
