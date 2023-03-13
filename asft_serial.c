@@ -25,7 +25,7 @@ static struct _asft_serial_port {
     int bytes_read;
     size_t bytes_remaining;
     size_t pkt_len;
-    unsigned char crc8_local;
+    unsigned char checksum_local;
     enum {
         HDLC_IDLE = 0,
         HDLC_NORM,
@@ -76,14 +76,14 @@ static size_t hdlc_encode(unsigned char *frame_buf, unsigned char *pkt, size_t p
 {
     unsigned int i;
     unsigned char *frame_pos = frame_buf;
-    unsigned char crc8 = 0;
+    unsigned char checksum = 0;
 
     *frame_pos = HDLC_FLAG_BYTE;
     frame_pos++;
 
     for (i = 0; i < pkt_len; i++) {
         unsigned char c = pkt[i];
-        crc8 += c;
+        checksum += c;
         if (c == HDLC_FLAG_BYTE || c == HDLC_ESC_BYTE) {
             *frame_pos = HDLC_ESC_BYTE;
             frame_pos++;
@@ -93,12 +93,12 @@ static size_t hdlc_encode(unsigned char *frame_buf, unsigned char *pkt, size_t p
         frame_pos++;
     }
 
-    if (crc8 == HDLC_FLAG_BYTE || crc8 == HDLC_ESC_BYTE) {
+    if (checksum == HDLC_FLAG_BYTE || checksum == HDLC_ESC_BYTE) {
         *frame_pos = HDLC_ESC_BYTE;
         frame_pos++;
-        crc8 ^= HDLC_ESC_MASK;
+        checksum ^= HDLC_ESC_MASK;
     }
-    *frame_pos = crc8;
+    *frame_pos = checksum;
     frame_pos++;
 
     *frame_pos = HDLC_FLAG_BYTE;
@@ -127,10 +127,10 @@ int asft_serial_init(char *devname, char *baudrate_string, size_t pkt_len_max)
     asft_serial_cleanup();
 
     p.pkt_len_max = pkt_len_max;
-    /* Worst case data length + Start/End Flags + Worst case CRC8 */
+    /* Worst case data length + Start/End Flags + Worst case checksum */
     p.frame_len_max = 2 * pkt_len_max + 2 + 2;
 
-    p.pkt_rx_buf = malloc(pkt_len_max + 1 /* CRC8 */);
+    p.pkt_rx_buf = malloc(pkt_len_max + 1 /* checksum */);
     if (!p.pkt_rx_buf) {
         asft_error("Serial input packet buffer allocation failed\n");
         goto error;
@@ -274,31 +274,31 @@ hdlc_decode:
         if (c == HDLC_FLAG_BYTE && p.hdlc_state == HDLC_IDLE) {
             p.hdlc_state = HDLC_NORM;
             p.pkt_len = 0;
-            p.crc8_local = 0;
+            p.checksum_local = 0;
         } else if (c == HDLC_FLAG_BYTE && p.hdlc_state == HDLC_ESC) {
             asft_debug("HDLC flag after escape\n");
             p.hdlc_state = HDLC_IDLE;
             p.pkt_len = 0;
-            p.crc8_local = 0;
+            p.checksum_local = 0;
         } else if (c == HDLC_FLAG_BYTE && p.hdlc_state == HDLC_NORM) {
             if (p.pkt_len > 1) {
-                p.crc8_local -= p.pkt_rx_buf[p.pkt_len - 1];
-                if (p.crc8_local == p.pkt_rx_buf[p.pkt_len - 1]) {
+                p.checksum_local -= p.pkt_rx_buf[p.pkt_len - 1];
+                if (p.checksum_local == p.pkt_rx_buf[p.pkt_len - 1]) {
                     /* Frame received */
                     *buf_ptr = p.pkt_rx_buf;
                     *len_ptr = p.pkt_len - 1;
                     p.pkt_len = 0;
-                    p.crc8_local = 0;
+                    p.checksum_local = 0;
                     return 1;
                 } else {
-                    asft_debug("HDLC frame CRC mismatch\n");
+                    asft_debug("HDLC frame checksum mismatch\n");
                     p.hdlc_state = HDLC_IDLE;
                     p.pkt_len = 0;
-                    p.crc8_local = 0;
+                    p.checksum_local = 0;
                 }
             } else {
                 p.pkt_len = 0;
-                p.crc8_local = 0;
+                p.checksum_local = 0;
             }
         } else if (c == HDLC_ESC_BYTE && p.hdlc_state == HDLC_NORM) {
             p.hdlc_state = HDLC_ESC;
@@ -313,9 +313,9 @@ hdlc_decode:
                 asft_debug("HDLC frame too long\n");
                 p.hdlc_state = HDLC_IDLE;
                 p.pkt_len = 0;
-                p.crc8_local = 0;
+                p.checksum_local = 0;
             } else {
-                p.crc8_local += c;
+                p.checksum_local += c;
                 p.pkt_rx_buf[p.pkt_len] = c;
                 p.pkt_len++;
             }
