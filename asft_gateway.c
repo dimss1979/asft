@@ -1,3 +1,7 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif /*_GNU_SOURCE*/
+
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
@@ -10,6 +14,7 @@
 #include "asft_crypto.h"
 #include "asft_serial.h"
 #include "asft_misc.h"
+#include "asft_file.h"
 
 #include "asft_gateway.h"
 
@@ -31,6 +36,11 @@ struct node
 
     asft_packet pkt;
     unsigned int pkt_len;
+
+    struct asft_file_ctx upload;
+    struct asft_file_ctx download;
+    char *upload_dir;
+    char *download_dir;
 };
 
 static struct node *node_first = NULL;
@@ -93,6 +103,11 @@ static int nodes_init()
             goto error;
         }
         getrandom(&n->skey, sizeof(n->skey), 0);
+        asft_file_ctx_init(&n->upload);
+        if (asprintf(&n->upload_dir, "from_%s", n->label) < 0)
+            goto error;
+        if (asprintf(&n->download_dir, "to_%s", n->label) < 0)
+            goto error;
 
         n->cmd = ASFT_REQ_ECDH_KEY;
         getrandom(&n->packet_number, sizeof(n->packet_number), 0);
@@ -113,6 +128,11 @@ error:
 int asft_gateway_add_node(char *label, char *password)
 {
     struct node *new;
+
+    if (strchr(label, '/')) {
+        asft_error("Invalid label - contains slash\n");
+        goto error;
+    }
 
     new = malloc(sizeof(*new));
     if (!new)
@@ -136,10 +156,8 @@ int asft_gateway_add_node(char *label, char *password)
 error:
 
     if (new) {
-        if (new->label)
-            free(new->label);
-        if (new->password)
-            free(new->password);
+        free(new->label);
+        free(new->password);
         free(new);
     }
 
@@ -193,6 +211,46 @@ error:
     return;
 }
 
+static void process_resp_get_file_ack(struct node *n, struct asft_cmd_get_file_ack *resp, size_t resp_len)
+{
+    unsigned int size_max = sizeof(*resp);
+    unsigned int size_min = size_max - sizeof(resp->name) + 1;
+    unsigned int name_len = resp_len - size_min + 1;
+    struct asft_file_ctx *u = &n->upload;
+
+    if (resp_len < size_min || resp_len > size_max)
+        goto error;
+
+    if (n->cmd != ASFT_REQ_GET_FILE)
+        goto error;
+
+    asft_file_ctx_reset(u);
+    u->size = be32toh(resp->size);
+    u->left = u->size;
+    u->name = strndup((char *) resp->name, name_len);
+    if (!u->name)
+        goto error;
+
+    if (asft_file_name_validate(u->name, name_len))
+        goto error;
+
+    if (asft_file_dst_open(n->upload_dir, u))
+        goto error;
+
+    asft_info("Uploading file '%s' (%u bytes)\n", u->name, u->size);
+    node_set_idle(n);
+
+    return;
+
+error:
+
+    asft_error("Node '%s' invalid ASFT_RSP_GET_FILE_ACK response\n", n->label);
+    node_set_error(n);
+    asft_file_ctx_reset(u);
+
+    return;
+}
+
 static void process_resp_get_file_nak(struct node *n, struct asft_base_hdr *resp, size_t resp_len)
 {
     if (resp_len != sizeof(*resp))
@@ -201,14 +259,14 @@ static void process_resp_get_file_nak(struct node *n, struct asft_base_hdr *resp
     if (n->cmd != ASFT_REQ_GET_FILE)
         goto error;
 
+    asft_debug("Node has no file to upload\n");
     node_set_idle(n);
-    asft_debug("No-upload response complete\n");
 
     return;
 
 error:
 
-    asft_error("Node '%s' invalid no-upload response\n", n->label);
+    asft_error("Node '%s' invalid ASFT_RSP_GET_FILE_NAK response\n", n->label);
     node_set_error(n);
 
     return;
@@ -257,7 +315,7 @@ int asft_gateway_loop()
                         n->ckey = &n->ikey;
                         break;
                     case ASFT_REQ_GET_FILE:
-                        asft_debug("Node '%s' upload request\n", n->label);
+                        asft_debug("Node '%s' get file\n", n->label);
                         n->pkt_len = sizeof(n->pkt.base);
                         break;
                     default:
@@ -317,6 +375,9 @@ int asft_gateway_loop()
             {
                 case ASFT_RSP_ECDH_KEY:
                     process_resp_ecdh(n, &resp->ecdh, rx_packet_len);
+                    break;
+                case ASFT_RSP_GET_FILE_ACK:
+                    process_resp_get_file_ack(n, &resp->get_file_ack, rx_packet_len);
                     break;
                 case ASFT_RSP_GET_FILE_NAK:
                     process_resp_get_file_nak(n, &resp->base, rx_packet_len);

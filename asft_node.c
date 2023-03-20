@@ -1,3 +1,7 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif /*_GNU_SOURCE*/
+
 #include <stdio.h>
 #include <string.h>
 #include <sys/random.h>
@@ -8,6 +12,7 @@
 #include "asft_crypto.h"
 #include "asft_serial.h"
 #include "asft_misc.h"
+#include "asft_file.h"
 
 #include "asft_node.h"
 
@@ -22,6 +27,11 @@ static struct gateway
     struct asft_ecdh *ecdh;
 
     uint32_t last_packet_number;
+
+    struct asft_file_ctx upload;
+    struct asft_file_ctx download;
+    char *upload_dir;
+    char *download_dir;
 } gw = { 0 };
 
 static int gateway_init()
@@ -35,6 +45,11 @@ static int gateway_init()
         goto error;
     };
     getrandom(&gw.skey, sizeof(gw.skey), 0);
+    asft_file_ctx_init(&gw.upload);
+    if (asprintf(&gw.upload_dir, "to_%s", gw.label) < 0)
+        goto error;
+    if (asprintf(&gw.download_dir, "from_%s", gw.label) < 0)
+        goto error;
 
     return 0;
 
@@ -84,16 +99,30 @@ static void process_req_get_file(asft_packet *req, size_t req_len, asft_packet *
     if (req_len != sizeof(req->base))
         goto error;
 
-    resp->base.command = ASFT_RSP_GET_FILE_NAK;
-    *resp_len = sizeof(resp->base);
+    if (asft_file_src_open(gw.upload_dir, &gw.upload))
+        goto error;
 
-    asft_debug("Upload request complete\n");
+    if (!gw.upload.name) {
+        resp->base.command = ASFT_RSP_GET_FILE_NAK;
+        *resp_len = sizeof(resp->base);
+
+        asft_debug("No file to upload\n");
+
+        return;
+    }
+
+    resp->base.command = ASFT_RSP_GET_FILE_ACK;
+    resp->get_file_ack.size = htobe32(gw.upload.size);
+    memcpy(resp->get_file_ack.name, gw.upload.name, gw.upload.name_len);
+    *resp_len = sizeof(resp->get_file_ack) - sizeof(resp->get_file_ack.name) + gw.upload.name_len;
+
+    asft_info("Uploading file '%s' (%u bytes)\n", gw.upload.name, gw.upload.size);
 
     return;
 
 error:
 
-    asft_error("Upload request failed\n");
+    asft_error("File upload request failed\n");
     process_error(resp, resp_len);
 
     return;
@@ -102,22 +131,29 @@ error:
 
 int asft_node_set_gateway(char *label, char *password)
 {
-    gw.label = strdup(label);
-    if (!gw.label)
+    if (strchr(label, '/')) {
+        asft_error("Invalid label - contains slash\n");
         goto error;
+    }
 
+    free(gw.label);
+    free(gw.password);
+
+    gw.label = strdup(label);
     gw.password = strdup(password);
-    if (!gw.password)
+
+    if (!gw.label || !gw.password)
         goto error;
 
     return 0;
 
 error:
 
-    if (gw.label)
-        free(gw.label);
-    if (gw.password)
-        free(gw.password);
+    free(gw.label);
+    free(gw.password);
+
+    gw.label = NULL;
+    gw.password = NULL;
 
     return -1;
 }

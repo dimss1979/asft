@@ -4,8 +4,8 @@
 #include <stdint.h>
 
 #define ASFT_TAG_LEN   10
-
 #define ASFT_ECDH_KEY_LEN  32
+#define ASFT_FILE_NAME_LEN  100
 
 struct asft_base_hdr {
     union {
@@ -21,9 +21,16 @@ struct asft_cmd_ecdh {
     uint8_t public_key[ASFT_ECDH_KEY_LEN];
 } __attribute__((packed));
 
+struct asft_cmd_get_file_ack {
+    struct asft_base_hdr base;
+    uint32_t size;
+    uint8_t name[ASFT_FILE_NAME_LEN];
+} __attribute__((packed));
+
 typedef union _asft_packet {
     struct asft_base_hdr base;
     struct asft_cmd_ecdh ecdh;
+    struct asft_cmd_get_file_ack get_file_ack;
 } __attribute__((packed)) asft_packet;
 
 enum asft_command {
