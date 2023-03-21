@@ -227,7 +227,7 @@ int asft_serial_send(unsigned char *pkt, size_t pkt_len)
         if (bytes_written > 0) {
             pos += bytes_written;
             bytes_remaining -= bytes_written;
-        } else if (bytes_written < 0 && bytes_written != -EINTR) {
+        } else if (bytes_written < 0 && errno != EINTR) {
             asft_error("Serial port write error\n");
             asft_serial_cleanup();
             return -EIO;
@@ -256,9 +256,10 @@ again:
 
     had_read = true;
     p.bytes_read = read(p.fd, p.read_buf, sizeof(p.read_buf));
-    if(p.bytes_read == -EINTR) {
-        goto again;
-    } else if (p.bytes_read < 0) {
+    if(p.bytes_read < 0) {
+        if (errno == EINTR) 
+            goto again;
+
         asft_error("Serial port read error\n");
         asft_serial_cleanup();
         return -EIO;
