@@ -96,13 +96,15 @@ error:
 
 static void process_req_get_file(asft_packet *req, size_t req_len, asft_packet *resp, size_t *resp_len)
 {
+    struct asft_file_ctx *u = &gw.upload;
+
     if (req_len != sizeof(req->base))
         goto error;
 
-    if (asft_file_src_open(gw.upload_dir, &gw.upload))
+    if (asft_file_src_open(gw.upload_dir, u))
         goto error;
 
-    if (!gw.upload.name) {
+    if (!u->name) {
         resp->base.command = ASFT_RSP_GET_FILE_NAK;
         *resp_len = sizeof(resp->base);
 
@@ -112,11 +114,11 @@ static void process_req_get_file(asft_packet *req, size_t req_len, asft_packet *
     }
 
     resp->base.command = ASFT_RSP_GET_FILE_ACK;
-    resp->get_file_ack.size = htobe32(gw.upload.size);
-    memcpy(resp->get_file_ack.name, gw.upload.name, gw.upload.name_len);
-    *resp_len = sizeof(resp->get_file_ack) - sizeof(resp->get_file_ack.name) + gw.upload.name_len;
+    resp->get_file_ack.size = htobe32(u->size);
+    memcpy(resp->get_file_ack.name, u->name, u->name_len);
+    *resp_len = sizeof(resp->get_file_ack) - sizeof(resp->get_file_ack.name) + u->name_len;
 
-    asft_info("Uploading file '%s' (%u bytes)\n", gw.upload.name, gw.upload.size);
+    asft_info("Uploading file '%s' (%u bytes)\n", u->name, u->size);
 
     return;
 
@@ -128,6 +130,64 @@ error:
     return;
 }
 
+static void process_req_get_block(asft_packet *req, size_t req_len, asft_packet *resp, size_t *resp_len)
+{
+    struct asft_file_ctx *u = &gw.upload;
+    unsigned int block = be32toh(req->get_block_req.block);
+
+    if (req_len != sizeof(req->get_block_req))
+        goto error;
+
+    if (block != u->block) {
+        if (!u->left)
+            goto error;
+
+        u->data_len = u->left > ASFT_BLOCK_LEN ? ASFT_BLOCK_LEN : u->left;
+        if (asft_file_src_read(u, u->data, u->data_len))
+            goto error;
+
+        u->block = block;
+        u->left -= u->data_len;
+    }
+
+    resp->base.command = ASFT_RSP_GET_BLOCK;
+    memcpy(&resp->get_block_rsp.data, u->data, u->data_len);
+    *resp_len = sizeof(resp->get_block_rsp) - sizeof(resp->get_block_rsp.data) + u->data_len;
+
+    asft_debug("Uploading %u bytes\n", u->data_len);
+
+    return;
+
+error:
+
+    asft_error("Block upload request failed\n");
+    process_error(resp, resp_len);
+
+    return;
+}
+
+static void process_req_upload_complete(asft_packet *req, size_t req_len, asft_packet *resp, size_t *resp_len)
+{
+    if (req_len != sizeof(req->base))
+        goto error;
+
+    if (asft_file_src_complete(&gw.upload))
+        goto error;
+
+    resp->base.command = ASFT_RSP_UPLOAD_COMPLETE;
+    *resp_len = sizeof(resp->base);
+
+    asft_info("Upload complete\n");
+
+    return;
+
+error:
+
+    asft_error("Upload complete request failed\n");
+    process_error(resp, resp_len);
+
+    return;
+}
 
 int asft_node_set_gateway(char *label, char *password)
 {
@@ -242,6 +302,12 @@ decrypted:
                 break;
             case ASFT_REQ_GET_FILE:
                 process_req_get_file(pkt, pkt_len, &resp, &resp_len);
+                break;
+            case ASFT_REQ_GET_BLOCK:
+                process_req_get_block(pkt, pkt_len, &resp, &resp_len);
+                break;
+            case ASFT_REQ_UPLOAD_COMPLETE:
+                process_req_upload_complete(pkt, pkt_len, &resp, &resp_len);
                 break;
             default:
                 asft_error("Unknown command %u\n", dh->command);

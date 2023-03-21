@@ -11,6 +11,7 @@
 #include <sys/types.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <errno.h>
 
 #include "asft_misc.h"
 #include "asft_proto.h"
@@ -70,6 +71,8 @@ int asft_file_src_open(char *dir, struct asft_file_ctx *c)
             continue;
 
         c->size = s.st_size;
+        c->left = c->size;
+        c->block = UINT32_MAX;
         c->name = strdup(e->d_name);
         c->path = strdup(path);
         c->name_len = name_len;
@@ -116,6 +119,77 @@ error:
     asft_file_ctx_reset(c);
 
     return -1;
+}
+
+int asft_file_src_read(struct asft_file_ctx *c, void *data, unsigned int data_len)
+{
+    int rv = 0;
+    unsigned int left = data_len;
+
+    while (left) {
+        rv = read(c->fd, data, left);
+        if (rv < 0) {
+            if (errno == EINTR)
+                continue;
+            asft_error("Read failed\n");
+            return rv;
+        } else if (rv == 0) {
+            asft_error("Read failed - EOF\n");
+            return -EIO;
+        }
+
+        left -= rv;
+        data += rv;
+    };
+
+    return 0;
+}
+
+int asft_file_dst_write(struct asft_file_ctx *c, void *data, unsigned int data_len)
+{
+    int rv = 0;
+    unsigned int left = data_len;
+
+    while (left) {
+        rv = write(c->fd, data, left);
+        if (rv < 0) {
+            if (errno == EINTR)
+                continue;
+            asft_error("Write failed\n");
+            return rv;
+        }
+
+        left -= rv;
+        data += rv;
+    };
+
+    return 0;
+}
+
+int asft_file_src_complete(struct asft_file_ctx *c)
+{
+    int rv = 0;
+
+    if (unlink(c->path)) {
+        asft_error("Unlink failed\n");
+        rv = -1;
+    }
+    asft_file_ctx_reset(c);
+
+    return rv;
+}
+
+int asft_file_dst_complete(struct asft_file_ctx *c)
+{
+    int rv = 0;
+
+    if (rename(c->path_tmp, c->path)) {
+        asft_error("Rename failed\n");
+        rv = -1;
+    }
+    asft_file_ctx_reset(c);
+
+    return rv;
 }
 
 int asft_file_name_validate(char *name, unsigned int name_len)

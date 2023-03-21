@@ -237,14 +237,24 @@ static void process_resp_get_file_ack(struct node *n, struct asft_cmd_get_file_a
     if (asft_file_dst_open(n->upload_dir, u))
         goto error;
 
-    asft_info("Uploading file '%s' (%u bytes)\n", u->name, u->size);
-    node_set_idle(n);
+    asft_info("Node '%s' uploading file '%s' (%u bytes)\n", n->label, u->name, u->size);
+
+    if (u->left) {
+        n->cmd = ASFT_REQ_GET_BLOCK;
+        n->retry = 0;
+    } else {
+        if (asft_file_dst_complete(u))
+            goto error;
+
+        n->cmd = ASFT_REQ_UPLOAD_COMPLETE;
+        n->retry = 0;
+    }
 
     return;
 
 error:
 
-    asft_error("Node '%s' invalid ASFT_RSP_GET_FILE_ACK response\n", n->label);
+    asft_error("Node '%s' ASFT_RSP_GET_FILE_ACK error\n", n->label);
     node_set_error(n);
     asft_file_ctx_reset(u);
 
@@ -267,6 +277,71 @@ static void process_resp_get_file_nak(struct node *n, struct asft_base_hdr *resp
 error:
 
     asft_error("Node '%s' invalid ASFT_RSP_GET_FILE_NAK response\n", n->label);
+    node_set_error(n);
+
+    return;
+}
+
+static void process_resp_get_block(struct node *n, struct asft_cmd_get_block_rsp *resp, size_t resp_len)
+{
+    unsigned int size_max = sizeof(*resp);
+    unsigned int size_min = size_max - sizeof(resp->data) + 1;
+    unsigned int data_len = resp_len - size_min + 1;
+    struct asft_file_ctx *u = &n->upload;
+
+    if (resp_len < size_min || resp_len > size_max)
+        goto error;
+
+    if (n->cmd != ASFT_REQ_GET_BLOCK)
+        goto error;
+
+    if (data_len > u->left)
+        goto error;
+
+    asft_debug("Uploaded %u bytes\n", data_len);
+
+    if (asft_file_dst_write(u, resp->data, data_len))
+        goto error;
+
+    u->left -= data_len;
+    u->block++;
+    n->retry = 0;
+
+    if (u->left)
+        return;
+
+    if (asft_file_dst_complete(u))
+        goto error;
+
+    n->cmd = ASFT_REQ_UPLOAD_COMPLETE;
+
+    return;
+
+error:
+
+    asft_error("Node '%s' ASFT_RSP_GET_BLOCK error\n", n->label);
+    node_set_error(n);
+    asft_file_ctx_reset(u);
+
+    return;
+}
+
+static void process_resp_upload_complete(struct node *n, struct asft_base_hdr *resp, size_t resp_len)
+{
+    if (resp_len != sizeof(*resp))
+        goto error;
+
+    if (n->cmd != ASFT_REQ_UPLOAD_COMPLETE)
+        goto error;
+
+    asft_debug("Upload complete ack\n");
+    node_set_idle(n);
+
+    return;
+
+error:
+
+    asft_error("Node '%s' invalid ASFT_RSP_UPLOAD_COMPLETE response\n", n->label);
     node_set_error(n);
 
     return;
@@ -316,6 +391,15 @@ int asft_gateway_loop()
                         break;
                     case ASFT_REQ_GET_FILE:
                         asft_debug("Node '%s' get file\n", n->label);
+                        n->pkt_len = sizeof(n->pkt.base);
+                        break;
+                    case ASFT_REQ_GET_BLOCK:
+                        asft_debug("Node '%s' get block %u\n", n->label, n->upload.block);
+                        n->pkt.get_block_req.block = htobe32(n->upload.block);
+                        n->pkt_len = sizeof(n->pkt.get_block_req);
+                        break;
+                    case ASFT_REQ_UPLOAD_COMPLETE:
+                        asft_info("Node '%s' upload complete\n", n->label);
                         n->pkt_len = sizeof(n->pkt.base);
                         break;
                     default:
@@ -381,6 +465,12 @@ int asft_gateway_loop()
                     break;
                 case ASFT_RSP_GET_FILE_NAK:
                     process_resp_get_file_nak(n, &resp->base, rx_packet_len);
+                    break;
+                case ASFT_RSP_GET_BLOCK:
+                    process_resp_get_block(n, &resp->get_block_rsp, rx_packet_len);
+                    break;
+                case ASFT_RSP_UPLOAD_COMPLETE:
+                    process_resp_upload_complete(n, &resp->base, rx_packet_len);
                     break;
                 case ASFT_RSP_ERROR:
                     asft_info("Node '%s' indicating error\n", n->label);
