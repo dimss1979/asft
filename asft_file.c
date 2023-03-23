@@ -72,7 +72,6 @@ int asft_file_src_open(char *dir, struct asft_file_ctx *c)
 
         c->size = s.st_size;
         c->left = c->size;
-        c->block = UINT32_MAX;
         c->name = strdup(e->d_name);
         c->path = strdup(path);
         c->name_len = name_len;

@@ -28,8 +28,7 @@ static struct gateway
 
     uint32_t last_packet_number;
 
-    struct asft_file_ctx upload;
-    struct asft_file_ctx download;
+    struct asft_file_ctx file;
     char *upload_dir;
     char *download_dir;
 } gw = { 0 };
@@ -45,7 +44,7 @@ static int gateway_init()
         goto error;
     };
     getrandom(&gw.skey, sizeof(gw.skey), 0);
-    asft_file_ctx_init(&gw.upload);
+    asft_file_ctx_init(&gw.file);
     if (asprintf(&gw.upload_dir, "to_%s", gw.label) < 0)
         goto error;
     if (asprintf(&gw.download_dir, "from_%s", gw.label) < 0)
@@ -96,7 +95,7 @@ error:
 
 static void process_req_get_file(asft_packet *req, size_t req_len, asft_packet *resp, size_t *resp_len)
 {
-    struct asft_file_ctx *u = &gw.upload;
+    struct asft_file_ctx *u = &gw.file;
 
     if (req_len != sizeof(req->base))
         goto error;
@@ -113,10 +112,11 @@ static void process_req_get_file(asft_packet *req, size_t req_len, asft_packet *
         return;
     }
 
+    u->block = UINT32_MAX;
     resp->base.command = ASFT_RSP_GET_FILE_ACK;
-    resp->get_file_ack.size = htobe32(u->size);
-    memcpy(resp->get_file_ack.name, u->name, u->name_len);
-    *resp_len = sizeof(resp->get_file_ack) - sizeof(resp->get_file_ack.name) + u->name_len;
+    resp->file_info.size = htobe32(u->size);
+    memcpy(resp->file_info.name, u->name, u->name_len);
+    *resp_len = sizeof(resp->file_info) - sizeof(resp->file_info.name) + u->name_len;
 
     asft_info("Uploading file '%s' (%u bytes)\n", u->name, u->size);
 
@@ -132,7 +132,7 @@ error:
 
 static void process_req_get_block(asft_packet *req, size_t req_len, asft_packet *resp, size_t *resp_len)
 {
-    struct asft_file_ctx *u = &gw.upload;
+    struct asft_file_ctx *u = &gw.file;
     unsigned int block = be32toh(req->get_block_req.block);
 
     if (req_len != sizeof(req->get_block_req))
@@ -171,7 +171,7 @@ static void process_req_upload_complete(asft_packet *req, size_t req_len, asft_p
     if (req_len != sizeof(req->base))
         goto error;
 
-    if (asft_file_src_complete(&gw.upload))
+    if (asft_file_src_complete(&gw.file))
         goto error;
 
     resp->base.command = ASFT_RSP_UPLOAD_COMPLETE;
@@ -184,6 +184,96 @@ static void process_req_upload_complete(asft_packet *req, size_t req_len, asft_p
 error:
 
     asft_error("Upload complete request failed\n");
+    process_error(resp, resp_len);
+
+    return;
+}
+
+static void process_req_put_file(asft_packet *req, size_t req_len, asft_packet *resp, size_t *resp_len)
+{
+    unsigned int size_max = sizeof(req->file_info);
+    unsigned int size_min = size_max - sizeof(req->file_info.name) + 1;
+    unsigned int name_len = req_len - size_min + 1;
+    struct asft_file_ctx *d = &gw.file;
+
+    if (req_len < size_min || req_len > size_max)
+        goto error;
+
+    asft_file_ctx_reset(d);
+    d->size = be32toh(req->file_info.size);
+    d->left = d->size;
+    d->name = strndup((char *) req->file_info.name, name_len);
+    if (!d->name)
+        goto error;
+
+    if (asft_file_name_validate(d->name, name_len))
+        goto error;
+
+    if (asft_file_dst_open(gw.download_dir, d))
+        goto error;
+
+    asft_info("Downloading file '%s' (%u bytes)\n", d->name, d->size);
+
+    if (!d->left) {
+        if (asft_file_dst_complete(d))
+            goto error;
+        asft_info("Download complete\n");
+    }
+
+    d->block = UINT32_MAX;
+    resp->base.command = ASFT_RSP_PUT_FILE;
+    *resp_len = sizeof(resp->base);
+
+    return;
+
+error:
+
+    asft_error("File download request failed\n");
+    process_error(resp, resp_len);
+
+    return;
+}
+
+static void process_req_put_block(asft_packet *req, size_t req_len, asft_packet *resp, size_t *resp_len)
+{
+    unsigned int size_max = sizeof(req->put_block_req);
+    unsigned int size_min = size_max - sizeof(req->put_block_req.data) + 1;
+    unsigned int data_len = req_len - size_min + 1;
+    struct asft_file_ctx *d = &gw.file;
+    unsigned int block = be32toh(req->put_block_req.block);
+
+    if (req_len < size_min || req_len > size_max)
+        goto error;
+
+    if (block != d->block) {
+        if (!d->left)
+            goto error;
+
+        asft_debug("Downloading %u bytes\n", data_len);
+
+        if (asft_file_dst_write(d, req->put_block_req.data, data_len))
+            goto error;
+
+        d->block = block;
+        d->left -= data_len;
+
+        if (!d->left) {
+            if (asft_file_dst_complete(d))
+                goto error;
+            asft_info("Download complete\n");
+        }
+    } else {
+        asft_debug("Received duplicate block\n");
+    }
+
+    resp->base.command = ASFT_RSP_PUT_BLOCK;
+    *resp_len = sizeof(resp->base);
+
+    return;
+
+error:
+
+    asft_error("Block download request failed\n");
     process_error(resp, resp_len);
 
     return;
@@ -308,6 +398,12 @@ decrypted:
                 break;
             case ASFT_REQ_UPLOAD_COMPLETE:
                 process_req_upload_complete(pkt, pkt_len, &resp, &resp_len);
+                break;
+            case ASFT_REQ_PUT_FILE:
+                process_req_put_file(pkt, pkt_len, &resp, &resp_len);
+                break;
+            case ASFT_REQ_PUT_BLOCK:
+                process_req_put_block(pkt, pkt_len, &resp, &resp_len);
                 break;
             default:
                 asft_error("Unknown command %u\n", dh->command);
