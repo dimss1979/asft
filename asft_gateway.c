@@ -33,6 +33,7 @@ struct node
     enum asft_command cmd;
     unsigned int retry;
     uint64_t pause_until;
+    bool had_file;
 
     asft_packet pkt;
     unsigned int pkt_len;
@@ -49,6 +50,107 @@ static int retries = 5;
 static int retry_timeout = 5;
 static int pause_idle = 10;
 static int pause_error = 10;
+
+static void proceed_ecdh_key(struct node *n)
+{
+    n->cmd = ASFT_REQ_ECDH_KEY;
+    n->pkt_len = sizeof(n->pkt.ecdh);
+    n->retry = 0;
+    getrandom(&n->packet_number, sizeof(n->packet_number), 0);
+    n->ckey = &n->ikey;
+    if (asft_ecdh_prepare(&n->ecdh, n->pkt.ecdh.public_key)) {
+        asft_error("Node '%s' cannot prepare session key exchange\n", n->label);
+    }
+}
+
+static void proceed_error(struct node *n)
+{
+    proceed_ecdh_key(n);
+    n->pause_until = 1000 * pause_error + asft_now();
+}
+
+static void proceed_get_file(struct node *n)
+{
+    n->cmd = ASFT_REQ_GET_FILE;
+    n->pkt_len = sizeof(n->pkt.base);
+    n->retry = 0;
+    n->had_file = false;
+}
+
+static void proceed_idle(struct node *n)
+{
+    proceed_get_file(n);
+    n->pause_until = 1000 * pause_idle + asft_now();
+}
+
+static void proceed_get_block(struct node *n)
+{
+    n->cmd = ASFT_REQ_GET_BLOCK;
+    n->pkt_len = sizeof(n->pkt.get_block_req);
+    n->pkt.get_block_req.block = htobe32(n->file.block);
+    n->retry = 0;
+}
+
+static void proceed_upload_complete(struct node *n)
+{
+    n->cmd = ASFT_REQ_UPLOAD_COMPLETE;
+    n->pkt_len = sizeof(n->pkt.base);
+    n->retry = 0;
+}
+
+static void proceed_put_file(struct node *n)
+{
+    struct asft_file_ctx *d = &n->file;
+
+    if (asft_file_src_open(n->download_dir, d))
+        goto error;
+
+    if (!d->name) {
+        asft_debug("No file to download\n");
+        if (n->had_file)
+            proceed_get_file(n);
+        else
+            proceed_idle(n);
+        return;
+    }
+
+    n->cmd = ASFT_REQ_PUT_FILE;
+    n->retry = 0;
+    n->pkt.file_info.size = htobe32(d->size);
+    memcpy(n->pkt.file_info.name, d->name, d->name_len);
+    n->pkt_len = sizeof(n->pkt.file_info) - sizeof(n->pkt.file_info.name) + d->name_len;
+    n->had_file = true;
+    return;
+
+error:
+
+    asft_error("Node '%s' cannot proceed to download\n", n->label);
+    proceed_error(n);
+    return;
+}
+
+static void proceed_put_block(struct node *n)
+{
+    struct asft_file_ctx *d = &n->file;
+    unsigned int data_len = d->left > ASFT_BLOCK_LEN ? ASFT_BLOCK_LEN : d->left;
+
+    if (asft_file_src_read(d, n->pkt.put_block_req.data, data_len))
+        goto error;
+
+    n->cmd = ASFT_REQ_PUT_BLOCK;
+    n->retry = 0;
+    n->pkt.put_block_req.block = htobe32(d->block);
+    n->pkt_len = sizeof(n->pkt.put_block_req) - sizeof(n->pkt.put_block_req.data) + data_len;
+    d->block++;
+    d->left -= data_len;
+    return;
+
+error:
+
+    asft_error("Node '%s' cannot read download block\n", n->label);
+    proceed_error(n);
+    return;
+}
 
 static struct node *node_pick_next(struct node *cur)
 {
@@ -92,12 +194,7 @@ static int nodes_init()
             goto error;
         if (asprintf(&n->download_dir, "to_%s", n->label) < 0)
             goto error;
-
-        n->cmd = ASFT_REQ_ECDH_KEY;
-        getrandom(&n->packet_number, sizeof(n->packet_number), 0);
-        n->pause_until = 0;
-        n->retry = 0;
-        n->ckey = &n->ikey;
+        proceed_ecdh_key(n);
 
         n = n->next;
     }
@@ -107,130 +204,6 @@ static int nodes_init()
 error:
 
     return -1;
-}
-
-int asft_gateway_add_node(char *label, char *password)
-{
-    struct node *new;
-
-    if (strchr(label, '/')) {
-        asft_error("Invalid label - contains slash\n");
-        goto error;
-    }
-
-    new = malloc(sizeof(*new));
-    if (!new)
-        goto error;
-    memset(new, 0, sizeof(*new));
-
-    new->label = strdup(label);
-    if (!new->label)
-        goto error;
-
-    new->password = strdup(password);
-    if (!new->password)
-        goto error;
-
-    new->next = node_first;
-    node_first = new;
-    node_cnt++;
-
-    return 0;
-
-error:
-
-    if (new) {
-        free(new->label);
-        free(new->password);
-        free(new);
-    }
-
-    return -1;
-}
-
-void asft_gateway_set_retries(int new_retries)
-{
-    retries = new_retries;
-}
-
-void asft_gateway_set_retry_timeout(int new_timeout)
-{
-    retry_timeout = new_timeout;
-}
-
-void asft_gateway_set_pause_idle(int new_pause_idle)
-{
-    pause_idle = new_pause_idle;
-}
-
-void asft_gateway_set_pause_error(int new_pause_error)
-{
-    pause_error = new_pause_error;
-}
-
-static void node_set_idle(struct node *n)
-{
-    n->cmd = ASFT_REQ_GET_FILE;
-    n->pause_until = 1000 * pause_idle + asft_now();
-    n->retry = 0;
-}
-
-static void node_set_error(struct node *n)
-{
-    n->cmd = ASFT_REQ_ECDH_KEY;
-    getrandom(&n->packet_number, sizeof(n->packet_number), 0);
-    n->pause_until = 1000 * pause_error + asft_now();
-    n->retry = 0;
-}
-
-static void put_file(struct node *n)
-{
-    struct asft_file_ctx *d = &n->file;
-
-    if (asft_file_src_open(n->download_dir, d))
-        goto error;
-
-    if (!d->name) {
-        asft_debug("No file to download\n");
-        node_set_idle(n);
-        return;
-    }
-
-    n->cmd = ASFT_REQ_PUT_FILE;
-    n->retry = 0;
-    n->pkt.file_info.size = htobe32(d->size);
-    memcpy(n->pkt.file_info.name, d->name, d->name_len);
-    n->pkt_len = sizeof(n->pkt.file_info) - sizeof(n->pkt.file_info.name) + d->name_len;
-    return;
-
-error:
-
-    asft_error("Node '%s' cannot proceed to download\n", n->label);
-    node_set_error(n);
-    return;
-}
-
-static void put_block(struct node *n)
-{
-    struct asft_file_ctx *d = &n->file;
-    unsigned int data_len = d->left > ASFT_BLOCK_LEN ? ASFT_BLOCK_LEN : d->left;
-
-    if (asft_file_src_read(d, n->pkt.put_block_req.data, data_len))
-        goto error;
-
-    n->cmd = ASFT_REQ_PUT_BLOCK;
-    n->retry = 0;
-    n->pkt.put_block_req.block = htobe32(d->block);
-    n->pkt_len = sizeof(n->pkt.put_block_req) - sizeof(n->pkt.put_block_req.data) + data_len;
-    d->block++;
-    d->left -= data_len;
-    return;
-
-error:
-
-    asft_error("Node '%s' cannot read download block\n", n->label);
-    node_set_error(n);
-    return;
 }
 
 static void process_resp_ecdh(struct node *n, struct asft_cmd_ecdh *resp, size_t resp_len)
@@ -244,9 +217,9 @@ static void process_resp_ecdh(struct node *n, struct asft_cmd_ecdh *resp, size_t
     if (asft_ecdh_process(&n->ecdh, resp->public_key, &n->skey))
         goto error;
 
-    n->cmd = ASFT_REQ_GET_FILE;
     n->packet_number = 0;
     n->ckey = &n->skey;
+    proceed_get_file(n);
 
     asft_info("Node '%s' session key exchange complete\n", n->label);
 
@@ -255,7 +228,7 @@ static void process_resp_ecdh(struct node *n, struct asft_cmd_ecdh *resp, size_t
 error:
 
     asft_error("Node '%s' session key exchange failed\n", n->label);
-    node_set_error(n);
+    proceed_error(n);
 
     return;
 }
@@ -289,22 +262,21 @@ static void process_resp_get_file_ack(struct node *n, struct asft_cmd_file_info 
     asft_info("Node '%s' uploading file '%s' (%u bytes)\n", n->label, u->name, u->size);
 
     if (u->left) {
-        n->cmd = ASFT_REQ_GET_BLOCK;
-        n->retry = 0;
+        proceed_get_block(n);
     } else {
         if (asft_file_dst_complete(u))
             goto error;
 
-        n->cmd = ASFT_REQ_UPLOAD_COMPLETE;
-        n->retry = 0;
+        proceed_upload_complete(n);
     }
+    n->had_file = true;
 
     return;
 
 error:
 
     asft_error("Node '%s' ASFT_RSP_GET_FILE_ACK error\n", n->label);
-    node_set_error(n);
+    proceed_error(n);
     asft_file_ctx_reset(u);
 
     return;
@@ -319,14 +291,14 @@ static void process_resp_get_file_nak(struct node *n, struct asft_base_hdr *resp
         goto error;
 
     asft_debug("Node has no file to upload\n");
-    put_file(n);
+    proceed_put_file(n);
 
     return;
 
 error:
 
     asft_error("Node '%s' invalid ASFT_RSP_GET_FILE_NAK response\n", n->label);
-    node_set_error(n);
+    proceed_error(n);
 
     return;
 }
@@ -354,23 +326,24 @@ static void process_resp_get_block(struct node *n, struct asft_cmd_get_block_rsp
 
     u->left -= data_len;
     u->block++;
-    n->retry = 0;
 
-    if (u->left)
+    if (u->left) {
+        proceed_get_block(n);
         return;
+    }
 
     if (asft_file_dst_complete(u))
         goto error;
 
-    n->cmd = ASFT_REQ_UPLOAD_COMPLETE;
+    proceed_upload_complete(n);
 
     return;
 
 error:
 
     asft_error("Node '%s' ASFT_RSP_GET_BLOCK error\n", n->label);
-    node_set_error(n);
     asft_file_ctx_reset(u);
+    proceed_error(n);
 
     return;
 }
@@ -384,14 +357,14 @@ static void process_resp_upload_complete(struct node *n, struct asft_base_hdr *r
         goto error;
 
     asft_debug("Upload complete ack\n");
-    put_file(n);
+    proceed_put_file(n);
 
     return;
 
 error:
 
     asft_error("Node '%s' ASFT_RSP_UPLOAD_COMPLETE error\n", n->label);
-    node_set_error(n);
+    proceed_error(n);
 
     return;
 }
@@ -406,12 +379,15 @@ static void process_resp_put_file(struct node *n, struct asft_base_hdr *resp, si
 
     asft_debug("Put file ack\n");
     if (n->file.left) {
-        put_block(n);
+        proceed_put_block(n);
     } else {
         if (asft_file_src_complete(&n->file))
             goto error;
         asft_info("Node '%s' download complete\n", n->label);
-        node_set_idle(n);
+        if (n->had_file)
+            proceed_get_file(n);
+        else
+            proceed_idle(n);
     }
 
     return;
@@ -419,7 +395,7 @@ static void process_resp_put_file(struct node *n, struct asft_base_hdr *resp, si
 error:
 
     asft_error("Node '%s' ASFT_RSP_PUT_FILE error\n", n->label);
-    node_set_error(n);
+    proceed_error(n);
 
     return;
 }
@@ -434,12 +410,15 @@ static void process_resp_put_block(struct node *n, struct asft_base_hdr *resp, s
 
     asft_debug("Put block ack\n");
     if (n->file.left) {
-        put_block(n);
+        proceed_put_block(n);
     } else {
         if (asft_file_src_complete(&n->file))
             goto error;
         asft_info("Node '%s' download complete\n", n->label);
-        node_set_idle(n);
+        if (n->had_file)
+            proceed_get_file(n);
+        else
+            proceed_idle(n);
     }
 
     return;
@@ -447,7 +426,7 @@ static void process_resp_put_block(struct node *n, struct asft_base_hdr *resp, s
 error:
 
     asft_error("Node '%s' ASFT_RSP_PUT_BLOCK error\n", n->label);
-    node_set_error(n);
+    proceed_error(n);
 
     return;
 }
@@ -487,25 +466,15 @@ int asft_gateway_loop()
                 {
                     case ASFT_REQ_ECDH_KEY:
                         asft_info("Node '%s' session key exchange\n", n->label);
-                        if (asft_ecdh_prepare(&n->ecdh, n->pkt.ecdh.public_key)) {
-                            asft_error("Cannot prepare session key exchange\n");
-                            return 1;
-                        }
-                        n->pkt_len = sizeof(n->pkt.ecdh);
-                        n->ckey = &n->ikey;
                         break;
                     case ASFT_REQ_GET_FILE:
                         asft_debug("Node '%s' get file\n", n->label);
-                        n->pkt_len = sizeof(n->pkt.base);
                         break;
                     case ASFT_REQ_GET_BLOCK:
                         asft_debug("Node '%s' get block %u\n", n->label, n->file.block);
-                        n->pkt.get_block_req.block = htobe32(n->file.block);
-                        n->pkt_len = sizeof(n->pkt.get_block_req);
                         break;
                     case ASFT_REQ_UPLOAD_COMPLETE:
                         asft_info("Node '%s' upload complete\n", n->label);
-                        n->pkt_len = sizeof(n->pkt.base);
                         break;
                     case ASFT_REQ_PUT_FILE:
                         asft_info("Node '%s' downloading file '%s' (%u bytes)\n", n->label, n->file.name, n->file.size);
@@ -591,11 +560,11 @@ int asft_gateway_loop()
                     break;
                 case ASFT_RSP_ERROR:
                     asft_info("Node '%s' indicating error\n", n->label);
-                    node_set_error(n);
+                    proceed_error(n);
                     break;
                 default:
                     asft_error("Node '%s' invalid response %u\n", n->label, dh->command);
-                    node_set_error(n);
+                    proceed_error(n);
             }
             got_response = true;
             n->retry = 0;
@@ -605,10 +574,69 @@ int asft_gateway_loop()
             asft_debug("No response\n");
             if (n->retry >= retries) {
                 asft_error("Node '%s' timeout\n", n->label);
-                node_set_error(n);
+                proceed_error(n);
             }
         }
     }
 
     return 0;
+}
+
+int asft_gateway_add_node(char *label, char *password)
+{
+    struct node *new;
+
+    if (strchr(label, '/')) {
+        asft_error("Invalid label - contains slash\n");
+        goto error;
+    }
+
+    new = malloc(sizeof(*new));
+    if (!new)
+        goto error;
+    memset(new, 0, sizeof(*new));
+
+    new->label = strdup(label);
+    if (!new->label)
+        goto error;
+
+    new->password = strdup(password);
+    if (!new->password)
+        goto error;
+
+    new->next = node_first;
+    node_first = new;
+    node_cnt++;
+
+    return 0;
+
+error:
+
+    if (new) {
+        free(new->label);
+        free(new->password);
+        free(new);
+    }
+
+    return -1;
+}
+
+void asft_gateway_set_retries(int new_retries)
+{
+    retries = new_retries;
+}
+
+void asft_gateway_set_retry_timeout(int new_timeout)
+{
+    retry_timeout = new_timeout;
+}
+
+void asft_gateway_set_pause_idle(int new_pause_idle)
+{
+    pause_idle = new_pause_idle;
+}
+
+void asft_gateway_set_pause_error(int new_pause_error)
+{
+    pause_error = new_pause_error;
 }
