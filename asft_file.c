@@ -18,6 +18,18 @@
 
 #include "asft_file.h"
 
+static uint32_t size_to_blocks(uint32_t size)
+{
+    uint32_t blocks, remainder;
+
+    blocks = size / ASFT_BLOCK_LEN;
+    remainder = size % ASFT_BLOCK_LEN;
+    if (remainder)
+        blocks++;
+
+    return blocks;
+}
+
 void asft_file_ctx_init(struct asft_file_ctx *c)
 {
     memset(c, 0, sizeof(*c));
@@ -36,7 +48,7 @@ void asft_file_ctx_reset(struct asft_file_ctx *c)
     asft_file_ctx_init(c);
 }
 
-int asft_file_src_open(char *dir, struct asft_file_ctx *c)
+int asft_file_src_open(struct asft_file_ctx *c, char *dir)
 {
     DIR *d;
     struct dirent *e;
@@ -75,6 +87,8 @@ int asft_file_src_open(char *dir, struct asft_file_ctx *c)
         c->name = strdup(e->d_name);
         c->path = strdup(path);
         c->name_len = name_len;
+        c->block = 1;
+        c->blocks = size_to_blocks(c->size);
         if (!c->name || !c->path)
             goto error;
 
@@ -92,10 +106,31 @@ error:
     return 1;
 }
 
-int asft_file_dst_open(char *dir, struct asft_file_ctx *c)
+int asft_file_dst_open(struct asft_file_ctx *c, char *dir, char *name, unsigned int name_len, uint32_t size)
 {
-    free(c->path);
-    free(c->path_tmp);
+    asft_file_ctx_reset(c);
+
+    c->size = size;
+    c->left = size;
+    c->block = 1;
+    c->blocks = size_to_blocks(size);
+    c->name = strndup(name, name_len);
+    if (!c->name)
+        goto error;
+
+    if (strlen(c->name) != name_len) {
+        asft_debug("Invalid filename - null character\n");
+        goto error;
+    }
+    if (c->name[0] == '.') {
+        asft_debug("Invalid filename - leading dot\n");
+        goto error;
+    }
+    if (strchr(c->name, '/')) {
+        asft_debug("Invalid filename - contains slash\n");
+        goto error;
+    }
+
     if (asprintf(&c->path, "%s/%s", dir, c->name) < 0)
         goto error;
     if (asprintf(&c->path_tmp, "%s/.tmp_file", dir) < 0)
@@ -189,24 +224,4 @@ int asft_file_dst_complete(struct asft_file_ctx *c)
     asft_file_ctx_reset(c);
 
     return rv;
-}
-
-int asft_file_name_validate(char *name, unsigned int name_len)
-{
-    if (strlen(name) != name_len) {
-        asft_debug("Invalid filename - null character\n");
-        return 1;
-    }
-
-    if (name[0] == '.') {
-        asft_debug("Invalid filename - leading dot\n");
-        return 1;
-    }
-
-    if (strchr(name, '/')) {
-        asft_debug("Invalid filename - contains slash\n");
-        return 1;
-    }
-
-    return 0;
 }

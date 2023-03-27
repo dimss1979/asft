@@ -37,6 +37,7 @@ struct node
 
     asft_packet pkt;
     unsigned int pkt_len;
+    unsigned int data_len;
 
     struct asft_file_ctx file;
     char *upload_dir;
@@ -102,7 +103,7 @@ static void proceed_put_file(struct node *n)
 {
     struct asft_file_ctx *d = &n->file;
 
-    if (asft_file_src_open(n->download_dir, d))
+    if (asft_file_src_open(d, n->download_dir))
         goto error;
 
     if (!d->name) {
@@ -141,6 +142,7 @@ static void proceed_put_block(struct node *n)
     n->retry = 0;
     n->pkt.put_block_req.block = htobe32(d->block);
     n->pkt_len = sizeof(n->pkt.put_block_req) - sizeof(n->pkt.put_block_req.data) + data_len;
+    n->data_len = data_len;
     d->block++;
     d->left -= data_len;
     return;
@@ -246,17 +248,7 @@ static void process_resp_get_file_ack(struct node *n, struct asft_cmd_file_info 
     if (n->cmd != ASFT_REQ_GET_FILE)
         goto error;
 
-    asft_file_ctx_reset(u);
-    u->size = be32toh(resp->size);
-    u->left = u->size;
-    u->name = strndup((char *) resp->name, name_len);
-    if (!u->name)
-        goto error;
-
-    if (asft_file_name_validate(u->name, name_len))
-        goto error;
-
-    if (asft_file_dst_open(n->upload_dir, u))
+    if (asft_file_dst_open(u, n->upload_dir, (char *) resp->name, name_len, be32toh(resp->size)))
         goto error;
 
     asft_info("Node '%s' uploading file '%s' (%u bytes)\n", n->label, u->name, u->size);
@@ -473,7 +465,7 @@ int asft_gateway_loop()
                         asft_debug("Node '%s' get file\n", n->label);
                         break;
                     case ASFT_REQ_GET_BLOCK:
-                        asft_debug("Node '%s' get block %u\n", n->label, n->file.block);
+                        asft_debug("Node '%s' get block %u/%u\n", n->label, n->file.block, n->file.blocks);
                         break;
                     case ASFT_REQ_UPLOAD_COMPLETE:
                         asft_debug("Node '%s' notify upload complete\n", n->label);
@@ -482,7 +474,7 @@ int asft_gateway_loop()
                         asft_info("Node '%s' downloading file '%s' (%u bytes)\n", n->label, n->file.name, n->file.size);
                         break;
                     case ASFT_REQ_PUT_BLOCK:
-                        asft_debug("Node '%s' put block %u\n", n->label, n->file.block - 1);
+                        asft_debug("Node '%s' put block %u/%u (%u bytes)\n", n->label, n->file.block - 1, n->file.blocks, n->data_len);
                         break;
                     default:
                         asft_error("Node '%s' invalid command %i\n", n->label, n->cmd);

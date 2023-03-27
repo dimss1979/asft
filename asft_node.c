@@ -100,7 +100,7 @@ static void process_req_get_file(asft_packet *req, size_t req_len, asft_packet *
     if (req_len != sizeof(req->base))
         goto error;
 
-    if (asft_file_src_open(gw.upload_dir, u))
+    if (asft_file_src_open(u, gw.upload_dir))
         goto error;
 
     if (!u->name) {
@@ -112,7 +112,7 @@ static void process_req_get_file(asft_packet *req, size_t req_len, asft_packet *
         return;
     }
 
-    u->block = UINT32_MAX;
+    u->block = 0;
     resp->base.command = ASFT_RSP_GET_FILE_ACK;
     resp->file_info.size = htobe32(u->size);
     memcpy(resp->file_info.name, u->name, u->name_len);
@@ -154,7 +154,7 @@ static void process_req_get_block(asft_packet *req, size_t req_len, asft_packet 
     memcpy(&resp->get_block_rsp.data, u->data, u->data_len);
     *resp_len = sizeof(resp->get_block_rsp) - sizeof(resp->get_block_rsp.data) + u->data_len;
 
-    asft_debug("Uploading block %u of %u bytes\n", block, u->data_len);
+    asft_debug("Uploading block %u/%u (%u bytes)\n", block, u->blocks, u->data_len);
 
     return;
 
@@ -199,17 +199,7 @@ static void process_req_put_file(asft_packet *req, size_t req_len, asft_packet *
     if (req_len < size_min || req_len > size_max)
         goto error;
 
-    asft_file_ctx_reset(d);
-    d->size = be32toh(req->file_info.size);
-    d->left = d->size;
-    d->name = strndup((char *) req->file_info.name, name_len);
-    if (!d->name)
-        goto error;
-
-    if (asft_file_name_validate(d->name, name_len))
-        goto error;
-
-    if (asft_file_dst_open(gw.download_dir, d))
+    if (asft_file_dst_open(d, gw.download_dir, (char *) req->file_info.name, name_len, be32toh(req->file_info.size)))
         goto error;
 
     asft_info("Downloading file '%s' (%u bytes)\n", d->name, d->size);
@@ -220,7 +210,7 @@ static void process_req_put_file(asft_packet *req, size_t req_len, asft_packet *
         asft_info("Download complete\n");
     }
 
-    d->block = UINT32_MAX;
+    d->block = 0;
     resp->base.command = ASFT_RSP_PUT_FILE;
     *resp_len = sizeof(resp->base);
 
@@ -246,10 +236,10 @@ static void process_req_put_block(asft_packet *req, size_t req_len, asft_packet 
         goto error;
 
     if (block != d->block) {
-        if (!d->left)
+        if (data_len > d->left)
             goto error;
 
-        asft_debug("Downloading block %u of %u bytes\n", block, data_len);
+        asft_debug("Downloading block %u/%u (%u bytes)\n", block, d->blocks, data_len);
 
         if (asft_file_dst_write(d, req->put_block_req.data, data_len))
             goto error;
