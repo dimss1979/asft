@@ -33,6 +33,7 @@ struct node
     enum asft_command cmd;
     unsigned int retry;
     uint64_t pause_until;
+    bool error;
     bool had_file;
 
     asft_packet pkt;
@@ -68,6 +69,7 @@ static void proceed_error(struct node *n)
 {
     proceed_ecdh_key(n);
     n->pause_until = 1000 * pause_error + asft_now();
+    n->error = true;
 }
 
 static void proceed_get_file(struct node *n)
@@ -154,6 +156,30 @@ error:
     return;
 }
 
+static void unpause_for_download()
+{
+    uint64_t now = asft_now();
+    struct node *n = node_first;
+    struct asft_file_ctx *d = &n->file;
+
+    while (n)
+    {
+        d = &n->file;
+
+        if (
+            n->pause_until > now &&
+            !n->error &&
+            !asft_file_src_open(d, n->download_dir) &&
+            d->name
+        ) {
+            n->pause_until = 0;
+            asft_file_reset(d);
+        }
+
+        n = n->next;
+    };
+}
+
 static struct node *node_pick_next(struct node *cur)
 {
     struct node *n = NULL;
@@ -166,8 +192,10 @@ static struct node *node_pick_next(struct node *cur)
         if (!n)
             n = node_first;
 
-        if (n->pause_until <= now)
+        if (n->pause_until <= now) {
+            n->error = false;
             return n;
+        }
 
         n = n->next;
     }
@@ -191,7 +219,7 @@ static int nodes_init()
             goto error;
         }
         getrandom(&n->skey, sizeof(n->skey), 0);
-        asft_file_ctx_init(&n->file);
+        asft_file_init(&n->file);
         if (asprintf(&n->upload_dir, "from_%s", n->label) < 0)
             goto error;
         if (asprintf(&n->download_dir, "to_%s", n->label) < 0)
@@ -270,7 +298,7 @@ error:
 
     asft_error("Node '%s' file upload response error\n", n->label);
     proceed_error(n);
-    asft_file_ctx_reset(u);
+    asft_file_reset(u);
 
     return;
 }
@@ -336,7 +364,7 @@ static void process_resp_get_block(struct node *n, struct asft_cmd_get_block_rsp
 error:
 
     asft_error("Node '%s' block upload error\n", n->label);
-    asft_file_ctx_reset(u);
+    asft_file_reset(u);
     proceed_error(n);
 
     return;
@@ -446,6 +474,7 @@ int asft_gateway_loop()
 
     while(1)
     {
+        unpause_for_download();
         n = node_pick_next(n);
 
         if (n) {

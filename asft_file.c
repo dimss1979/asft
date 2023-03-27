@@ -30,13 +30,13 @@ static uint32_t size_to_blocks(uint32_t size)
     return blocks;
 }
 
-void asft_file_ctx_init(struct asft_file_ctx *c)
+void asft_file_init(struct asft_file_ctx *c)
 {
     memset(c, 0, sizeof(*c));
     c->fd = -1;
 }
 
-void asft_file_ctx_reset(struct asft_file_ctx *c)
+void asft_file_reset(struct asft_file_ctx *c)
 {
     if (c->fd >= 0)
         close(c->fd);
@@ -45,7 +45,7 @@ void asft_file_ctx_reset(struct asft_file_ctx *c)
     free(c->path);
     free(c->path_tmp);
 
-    asft_file_ctx_init(c);
+    asft_file_init(c);
 }
 
 int asft_file_src_open(struct asft_file_ctx *c, char *dir)
@@ -56,7 +56,7 @@ int asft_file_src_open(struct asft_file_ctx *c, char *dir)
     struct stat64 s;
     unsigned int name_len;
 
-    asft_file_ctx_reset(c);
+    asft_file_reset(c);
     d = opendir(dir);
     if (!d) {
         asft_error("Cannot list directory '%s'\n", dir);
@@ -101,14 +101,14 @@ int asft_file_src_open(struct asft_file_ctx *c, char *dir)
 
 error:
 
-    asft_file_ctx_reset(c);
+    asft_file_reset(c);
 
     return 1;
 }
 
 int asft_file_dst_open(struct asft_file_ctx *c, char *dir, char *name, unsigned int name_len, uint32_t size)
 {
-    asft_file_ctx_reset(c);
+    asft_file_reset(c);
 
     c->size = size;
     c->left = size;
@@ -150,7 +150,7 @@ int asft_file_dst_open(struct asft_file_ctx *c, char *dir, char *name, unsigned 
 
 error:
 
-    asft_file_ctx_reset(c);
+    asft_file_reset(c);
 
     return -1;
 }
@@ -208,7 +208,7 @@ int asft_file_src_complete(struct asft_file_ctx *c)
         asft_error("Unlink failed\n");
         rv = -1;
     }
-    asft_file_ctx_reset(c);
+    asft_file_reset(c);
 
     return rv;
 }
@@ -221,7 +221,7 @@ int asft_file_dst_complete(struct asft_file_ctx *c)
         asft_error("Rename failed\n");
         rv = -1;
     }
-    asft_file_ctx_reset(c);
+    asft_file_reset(c);
 
     return rv;
 }

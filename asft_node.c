@@ -44,7 +44,7 @@ static int gateway_init()
         goto error;
     };
     getrandom(&gw.skey, sizeof(gw.skey), 0);
-    asft_file_ctx_init(&gw.file);
+    asft_file_init(&gw.file);
     if (asprintf(&gw.upload_dir, "to_%s", gw.label) < 0)
         goto error;
     if (asprintf(&gw.download_dir, "from_%s", gw.label) < 0)
