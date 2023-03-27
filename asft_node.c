@@ -279,35 +279,6 @@ error:
     return;
 }
 
-int asft_node_set_gateway(char *label, char *password)
-{
-    if (strchr(label, '/')) {
-        asft_error("Invalid label - contains slash\n");
-        goto error;
-    }
-
-    free(gw.label);
-    free(gw.password);
-
-    gw.label = strdup(label);
-    gw.password = strdup(password);
-
-    if (!gw.label || !gw.password)
-        goto error;
-
-    return 0;
-
-error:
-
-    free(gw.label);
-    free(gw.password);
-
-    gw.label = NULL;
-    gw.password = NULL;
-
-    return -1;
-}
-
 int asft_node_loop()
 {
     if (gateway_init()) {
@@ -427,4 +398,33 @@ decrypted:
     }
 
     return 0;
+}
+
+int asft_node_set_gateway(char *label, char *password)
+{
+    if (strchr(label, '/')) {
+        asft_error("Invalid label - contains slash\n");
+        goto error;
+    }
+
+    free(gw.label);
+    free(gw.password);
+
+    gw.label = strdup(label);
+    gw.password = strdup(password);
+
+    if (!gw.label || !gw.password)
+        goto error;
+
+    return 0;
+
+error:
+
+    free(gw.label);
+    free(gw.password);
+
+    gw.label = NULL;
+    gw.password = NULL;
+
+    return -1;
 }
