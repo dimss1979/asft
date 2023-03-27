@@ -321,8 +321,6 @@ int asft_node_loop()
 
 decrypted:
 
-        asft_debug("Decrypted using key %u\n", decryption_key);
-
         dh = &pkt->base;
 
         if (dh->command == ASFT_REQ_ECDH_KEY && decryption_key != D_IKEY) {
@@ -336,6 +334,10 @@ decrypted:
         rx_packet_number = be32toh(pkt->base.packet_number);
         if (decryption_key == D_SKEY && rx_packet_number <= gw.last_packet_number) {
             asft_error("Packet number %u, last was %u\n", rx_packet_number, gw.last_packet_number);
+            continue;
+        }
+        if (decryption_key == D_TKEY && rx_packet_number) {
+            asft_error("Packet number %u, must be 0\n", rx_packet_number);
             continue;
         }
         if (decryption_key != D_IKEY) {
