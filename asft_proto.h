@@ -5,8 +5,8 @@
 
 #define ASFT_TAG_LEN   10
 #define ASFT_ECDH_KEY_LEN  32
-#define ASFT_FILE_NAME_LEN  100
-#define ASFT_BLOCK_LEN  100
+#define ASFT_FILE_NAME_LEN  200
+#define ASFT_BLOCK_LEN  200
 
 struct asft_base_hdr {
     union {
