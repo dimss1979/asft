@@ -227,7 +227,7 @@ static void process_resp_ecdh(struct node *n, struct asft_cmd_ecdh *resp, size_t
 
 error:
 
-    asft_error("Node '%s' session key exchange failed\n", n->label);
+    asft_error("Node '%s' session key exchange error\n", n->label);
     proceed_error(n);
 
     return;
@@ -267,6 +267,7 @@ static void process_resp_get_file_ack(struct node *n, struct asft_cmd_file_info 
         if (asft_file_dst_complete(u))
             goto error;
 
+        asft_info("Node '%s' upload complete\n", n->label);
         proceed_upload_complete(n);
     }
     n->had_file = true;
@@ -275,7 +276,7 @@ static void process_resp_get_file_ack(struct node *n, struct asft_cmd_file_info 
 
 error:
 
-    asft_error("Node '%s' ASFT_RSP_GET_FILE_ACK error\n", n->label);
+    asft_error("Node '%s' file upload response error\n", n->label);
     proceed_error(n);
     asft_file_ctx_reset(u);
 
@@ -297,7 +298,7 @@ static void process_resp_get_file_nak(struct node *n, struct asft_base_hdr *resp
 
 error:
 
-    asft_error("Node '%s' invalid ASFT_RSP_GET_FILE_NAK response\n", n->label);
+    asft_error("Node '%s' file upload negative response error\n", n->label);
     proceed_error(n);
 
     return;
@@ -335,13 +336,14 @@ static void process_resp_get_block(struct node *n, struct asft_cmd_get_block_rsp
     if (asft_file_dst_complete(u))
         goto error;
 
+    asft_info("Node '%s' upload complete\n", n->label);
     proceed_upload_complete(n);
 
     return;
 
 error:
 
-    asft_error("Node '%s' ASFT_RSP_GET_BLOCK error\n", n->label);
+    asft_error("Node '%s' block upload error\n", n->label);
     asft_file_ctx_reset(u);
     proceed_error(n);
 
@@ -356,14 +358,14 @@ static void process_resp_upload_complete(struct node *n, struct asft_base_hdr *r
     if (n->cmd != ASFT_REQ_UPLOAD_COMPLETE)
         goto error;
 
-    asft_debug("Upload complete ack\n");
+    asft_debug("Upload complete ok\n");
     proceed_put_file(n);
 
     return;
 
 error:
 
-    asft_error("Node '%s' ASFT_RSP_UPLOAD_COMPLETE error\n", n->label);
+    asft_error("Node '%s' upload complete error\n", n->label);
     proceed_error(n);
 
     return;
@@ -377,7 +379,7 @@ static void process_resp_put_file(struct node *n, struct asft_base_hdr *resp, si
     if (n->cmd != ASFT_REQ_PUT_FILE)
         goto error;
 
-    asft_debug("Put file ack\n");
+    asft_debug("Put file ok\n");
     if (n->file.left) {
         proceed_put_block(n);
     } else {
@@ -394,7 +396,7 @@ static void process_resp_put_file(struct node *n, struct asft_base_hdr *resp, si
 
 error:
 
-    asft_error("Node '%s' ASFT_RSP_PUT_FILE error\n", n->label);
+    asft_error("Node '%s' file download error\n", n->label);
     proceed_error(n);
 
     return;
@@ -425,7 +427,7 @@ static void process_resp_put_block(struct node *n, struct asft_base_hdr *resp, s
 
 error:
 
-    asft_error("Node '%s' ASFT_RSP_PUT_BLOCK error\n", n->label);
+    asft_error("Node '%s' block download error\n", n->label);
     proceed_error(n);
 
     return;
@@ -474,7 +476,7 @@ int asft_gateway_loop()
                         asft_debug("Node '%s' get block %u\n", n->label, n->file.block);
                         break;
                     case ASFT_REQ_UPLOAD_COMPLETE:
-                        asft_info("Node '%s' upload complete\n", n->label);
+                        asft_debug("Node '%s' notify upload complete\n", n->label);
                         break;
                     case ASFT_REQ_PUT_FILE:
                         asft_info("Node '%s' downloading file '%s' (%u bytes)\n", n->label, n->file.name, n->file.size);

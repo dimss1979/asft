@@ -154,7 +154,7 @@ static void process_req_get_block(asft_packet *req, size_t req_len, asft_packet 
     memcpy(&resp->get_block_rsp.data, u->data, u->data_len);
     *resp_len = sizeof(resp->get_block_rsp) - sizeof(resp->get_block_rsp.data) + u->data_len;
 
-    asft_debug("Uploading %u bytes\n", u->data_len);
+    asft_debug("Uploading block %u of %u bytes\n", block, u->data_len);
 
     return;
 
@@ -249,7 +249,7 @@ static void process_req_put_block(asft_packet *req, size_t req_len, asft_packet 
         if (!d->left)
             goto error;
 
-        asft_debug("Downloading %u bytes\n", data_len);
+        asft_debug("Downloading block %u of %u bytes\n", block, data_len);
 
         if (asft_file_dst_write(d, req->put_block_req.data, data_len))
             goto error;
