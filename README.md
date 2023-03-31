@@ -30,6 +30,7 @@ With default block and header size, packet size is from 222 to 442 bytes.
 Usually it does not exceed 250.
 
 By default, `asft` will transfer files with size up to 4294967295 bytes and filename up to 200 bytes.
+File names beginning with a dot are ignored.
 Symlinks are allowed.
 Other files are ignored.
 
@@ -74,6 +75,12 @@ Directory names are derived from node labels.
 The program will pick files from corresponding `to_node_label` directory of the gateway, transfer them to that node and place in its `from_gateway_label` directory.
 This is called "download".
 The opposite process of file transfer from node to gateway is called "upload".
+
+The user is advised to write their data to some temporary file in another directory.
+Note that dotfiles are ignored by `asft`.
+The same `to_label` directory can be used if your temporary file name is beginning with a dot.
+And then move/rename file or create a symlink in `to_label` directory.
+The file is ready for transfer.
 
 ## Gateway operation
 
