@@ -12,13 +12,13 @@
 #include "asft_gateway.h"
 #include "asft_misc.h"
 
-enum op_mode {
+typedef enum {
     OM_UNKNOWN,
     OM_GATEWAY,
     OM_NODE
-};
+} op_mode_t;
 
-enum op_mode op_mode = OM_UNKNOWN;
+op_mode_t op_mode = OM_UNKNOWN;
 
 static int read_config_file(char *filename)
 {
