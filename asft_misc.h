@@ -9,6 +9,6 @@ void asft_debug(const char *format, ...);
 void asft_dump(void *buf, size_t len, char *desc);
 void asft_debug_dump(void *buf, size_t len, char *desc);
 void asft_set_debug(unsigned int d);
-uint64_t asft_now();
+uint64_t asft_now(void);
 
 #endif /* _ASFT_MISC_H_ */

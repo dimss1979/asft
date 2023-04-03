@@ -42,7 +42,7 @@ static int gateway_init()
     if(asft_kdf(&gw.ikey, gw.password)) {
         asft_error("Gateway initial key derivation failed\n");
         goto error;
-    };
+    }
     getrandom(&gw.skey, sizeof(gw.skey), 0);
     asft_file_init(&gw.file);
     if (asprintf(&gw.upload_dir, "to_%s", gw.label) < 0)
@@ -388,8 +388,6 @@ decrypted:
         }
 
     }
-
-    return 0;
 }
 
 int asft_node_set_gateway(char *label, char *password)

@@ -177,7 +177,7 @@ static void unpause_for_download()
         }
 
         n = n->next;
-    };
+    }
 }
 
 static struct node *node_pick_next(struct node *cur)

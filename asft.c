@@ -22,7 +22,7 @@ typedef enum {
     OM_NODE
 } op_mode_t;
 
-op_mode_t op_mode = OM_UNKNOWN;
+static op_mode_t op_mode = OM_UNKNOWN;
 
 static int read_config_file(char *filename)
 {
@@ -78,12 +78,13 @@ static int read_config_file(char *filename)
                 goto error;
             }
         } else if (!strcmp(token, "port")) {
-            char *device_name = strtok(NULL, delimiters);
+            char *device_name, *baudrate;
+            device_name = strtok(NULL, delimiters);
             if (!device_name) {
                 asft_error("No serial device name specified on line %i\n", line_number);
                 goto error;
             }
-            char *baudrate = strtok(NULL, delimiters);
+            baudrate = strtok(NULL, delimiters);
             if (!baudrate) {
                 asft_error("No baudrate specified on line %i\n", line_number);
                 goto error;
@@ -121,12 +122,13 @@ static int read_config_file(char *filename)
             }
             asft_gateway_set_pause_error(atoi(pause_error));
         } else if (!strcmp(token, "node")) {
-            char *label = strtok(NULL, delimiters);
+            char *label, *password;
+            label = strtok(NULL, delimiters);
             if (!label) {
                 asft_error("Node label not specified on line %i\n", line_number);
                 goto error;
             }
-            char *password = strtok(NULL, delimiters);
+            password = strtok(NULL, delimiters);
             if (!password) {
                 asft_error("Node password not specified on line %i\n", line_number);
                 goto error;
@@ -136,12 +138,13 @@ static int read_config_file(char *filename)
                 goto error;
             }
         } else if (!strcmp(token, "gateway")) {
-            char *label = strtok(NULL, delimiters);
+            char *label, *password;
+            label = strtok(NULL, delimiters);
             if (!label) {
                 asft_error("Gateway label not specified on line %i\n", line_number);
                 goto error;
             }
-            char *password = strtok(NULL, delimiters);
+            password = strtok(NULL, delimiters);
             if (!password) {
                 asft_error("Gateway password not specified on line %i\n", line_number);
                 goto error;
@@ -195,7 +198,7 @@ int main(int argc, char **argv)
         default:
             asft_error("Operation mode not specified\n");
             return 1;
-    };
+    }
 
     return !!rv;
 }

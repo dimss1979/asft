@@ -161,9 +161,10 @@ int asft_file_src_read(struct asft_file_ctx *c, void *data, unsigned int data_le
 {
     int rv = 0;
     unsigned int left = data_len;
+    unsigned char *buf = data;
 
     while (left) {
-        rv = read(c->fd, data, left);
+        rv = read(c->fd, buf, left);
         if (rv < 0) {
             if (errno == EINTR)
                 continue;
@@ -175,8 +176,8 @@ int asft_file_src_read(struct asft_file_ctx *c, void *data, unsigned int data_le
         }
 
         left -= rv;
-        data += rv;
-    };
+        buf += rv;
+    }
 
     return 0;
 }
@@ -185,9 +186,10 @@ int asft_file_dst_write(struct asft_file_ctx *c, void *data, unsigned int data_l
 {
     int rv = 0;
     unsigned int left = data_len;
+    unsigned char *buf = data;
 
     while (left) {
-        rv = write(c->fd, data, left);
+        rv = write(c->fd, buf, left);
         if (rv < 0) {
             if (errno == EINTR)
                 continue;
@@ -196,8 +198,8 @@ int asft_file_dst_write(struct asft_file_ctx *c, void *data, unsigned int data_l
         }
 
         left -= rv;
-        data += rv;
-    };
+        buf += rv;
+    }
 
     return 0;
 }

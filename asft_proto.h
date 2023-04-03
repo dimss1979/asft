@@ -44,7 +44,7 @@ struct asft_cmd_put_block_req {
     uint8_t data[ASFT_BLOCK_LEN];
 } __attribute__((packed));
 
-typedef union _asft_packet {
+typedef union {
     struct asft_base_hdr base;
     struct asft_cmd_ecdh ecdh;
     struct asft_cmd_file_info file_info;

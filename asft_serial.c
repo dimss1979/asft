@@ -15,7 +15,7 @@
 #define HDLC_ESC_BYTE  0x7d
 #define HDLC_ESC_MASK  0x20
 
-static struct _asft_serial_port {
+static struct {
     int fd;
     size_t pkt_len_max;
     size_t frame_len_max;
@@ -69,7 +69,7 @@ static speed_t string_to_baudrate(char *baudrate_string)
         case 3500000: return B3500000;
         case 4000000: return B4000000;
         default: return B0;
-    };
+    }
 }
 
 static size_t hdlc_encode(unsigned char *frame_buf, unsigned char *pkt, size_t pkt_len)
@@ -123,6 +123,7 @@ static void asft_serial_cleanup()
 int asft_serial_init(char *devname, char *baudrate_string, size_t pkt_len_max)
 {
     struct termios t;
+    speed_t baudrate;
 
     asft_serial_cleanup();
 
@@ -142,7 +143,7 @@ int asft_serial_init(char *devname, char *baudrate_string, size_t pkt_len_max)
         goto error;
     }
 
-    speed_t baudrate = string_to_baudrate(baudrate_string);
+    baudrate = string_to_baudrate(baudrate_string);
     if (baudrate == B0) {
         asft_error("Wrong serial port speed: %s\n", baudrate_string);
         goto error;
