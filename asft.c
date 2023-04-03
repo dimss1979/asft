@@ -1,4 +1,8 @@
-// gcc -o asft -Wall -Werror *.c -lcrypto
+// gcc -o asft -Wall -Werror -std=gnu11 *.c -lcrypto
+//
+// or
+//
+// clang -o asft -Wall -Werror -std=gnu11 *.c -lcrypto
 
 #include <stdio.h>
 #include <string.h>

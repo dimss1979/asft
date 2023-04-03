@@ -39,7 +39,13 @@ Other files are ignored.
 It does not have Makefile yet.
 
 ```
-gcc -o asft -Wall -Werror *.c -lcrypto
+gcc -o asft -Wall -Werror -std=gnu11 *.c -lcrypto
+```
+
+or
+
+```
+clang -o asft -Wall -Werror -std=gnu11 *.c -lcrypto
 ```
 
 OpenSSL 3.x is required.
