@@ -607,7 +607,7 @@ int asft_gateway_loop()
 
 int asft_gateway_add_node(char *label, char *password)
 {
-    struct node *new;
+    struct node *new = NULL;
 
     if (strchr(label, '/')) {
         asft_error("Invalid label - contains slash\n");
