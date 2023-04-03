@@ -101,6 +101,8 @@ int asft_file_src_open(struct asft_file_ctx *c, char *dir)
 
 error:
 
+    if (d)
+        closedir(d);
     asft_file_reset(c);
 
     return 1;
