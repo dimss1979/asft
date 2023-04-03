@@ -160,7 +160,7 @@ static void unpause_for_download()
 {
     uint64_t now = asft_now();
     struct node *n = node_first;
-    struct asft_file_ctx *d = &n->file;
+    struct asft_file_ctx *d;
 
     while (n)
     {
