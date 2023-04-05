@@ -24,10 +24,8 @@ The communication is always initiated by the gateway.
 Nodes only respond to requests coming from gateway.
 Half-duplex nature and security make `asft` different from many other serial file transfer protocols.
 
-HDLC-like framing with byte stuffing is used.
-Consequently, the actual transmitted packet size is variable and depends on *encrypted* packet contents (the amount of bytes to be escaped).
-With default block and header size, packet size is from 222 to 442 bytes.
-Usually it does not exceed 250.
+COBS framing is used.
+With default block and header size, maximum frame size is 222 bytes (including start and stop delimiters).
 
 By default, `asft` will transfer files with size up to 4294967295 bytes and filename up to 200 bytes.
 File names beginning with a dot are ignored.

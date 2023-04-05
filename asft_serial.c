@@ -11,26 +11,21 @@
 
 #include "asft_serial.h"
 
-#define HDLC_FLAG_BYTE 0x7e
-#define HDLC_ESC_BYTE  0x7d
-#define HDLC_ESC_MASK  0x20
-
 static struct {
     int fd;
-    size_t pkt_len_max;
-    size_t frame_len_max;
-    unsigned char *pkt_rx_buf;
-    unsigned char *frame_tx_buf;
     unsigned char read_buf[100];
     int bytes_read;
     size_t bytes_remaining;
-    size_t pkt_len;
-    unsigned char checksum_local;
-    enum {
-        HDLC_IDLE = 0,
-        HDLC_NORM,
-        HDLC_ESC
-    } hdlc_state;
+
+    unsigned char *pkt_rx_buf;
+    size_t pkt_len_max;
+
+    unsigned char *frame_tx_buf;
+    size_t frame_tx_len_max;
+
+    unsigned char *frame_rx_buf;
+    size_t frame_rx_len;
+    size_t frame_rx_len_max;
 } p = {
     .fd = -1
 };
@@ -72,39 +67,67 @@ static speed_t string_to_baudrate(char *baudrate_string)
     }
 }
 
-static size_t hdlc_encode(unsigned char *frame_buf, unsigned char *pkt, size_t pkt_len)
+static size_t cobs_encode(const uint8_t * restrict input, size_t length, uint8_t * restrict output)
 {
-    unsigned int i;
-    unsigned char *frame_pos = frame_buf;
-    unsigned char checksum = 0;
+    size_t read_index = 0;
+    size_t write_index = 1;
+    size_t code_index = 0;
+    uint8_t code = 1;
 
-    *frame_pos = HDLC_FLAG_BYTE;
-    frame_pos++;
-
-    for (i = 0; i < pkt_len; i++) {
-        unsigned char c = pkt[i];
-        checksum += c;
-        if (c == HDLC_FLAG_BYTE || c == HDLC_ESC_BYTE) {
-            *frame_pos = HDLC_ESC_BYTE;
-            frame_pos++;
-            c ^= HDLC_ESC_MASK;
+    while(read_index < length) {
+        if(input[read_index] == 0) {
+            output[code_index] = code;
+            code = 1;
+            code_index = write_index;
+            write_index++;
+            read_index++;
+        } else {
+            output[write_index] = input[read_index];
+            write_index++;
+            read_index++;
+            code++;
+            if(code == 0xff) {
+                output[code_index] = code;
+                code = 1;
+                code_index = write_index;
+                write_index++;
+            }
         }
-        *frame_pos = c;
-        frame_pos++;
     }
 
-    if (checksum == HDLC_FLAG_BYTE || checksum == HDLC_ESC_BYTE) {
-        *frame_pos = HDLC_ESC_BYTE;
-        frame_pos++;
-        checksum ^= HDLC_ESC_MASK;
+    output[code_index] = code;
+
+    return write_index;
+}
+
+static size_t cobs_decode(const uint8_t * restrict input, size_t length, uint8_t * restrict output)
+{
+    size_t read_index = 0;
+    size_t write_index = 0;
+    uint8_t code;
+    uint8_t i;
+
+    while (read_index < length) {
+        code = input[read_index];
+
+        if(read_index + code > length && code != 1)
+            return 0;
+
+        read_index++;
+
+        for (i = 1; i < code; i++) {
+            output[write_index] = input[read_index];
+            write_index++;
+            read_index++;
+        }
+
+        if (code != 0xff && read_index != length) {
+            output[write_index] = 0x00;
+            write_index++;
+        }
     }
-    *frame_pos = checksum;
-    frame_pos++;
 
-    *frame_pos = HDLC_FLAG_BYTE;
-    frame_pos++;
-
-    return frame_pos - frame_buf;
+    return write_index;
 }
 
 static void asft_serial_cleanup()
@@ -115,6 +138,8 @@ static void asft_serial_cleanup()
         free(p.pkt_rx_buf);
     if (p.frame_tx_buf)
         free(p.frame_tx_buf);
+    if (p.frame_rx_buf)
+        free(p.frame_rx_buf);
 
     memset(&p, 0, sizeof(p));
     p.fd = -1;
@@ -128,8 +153,8 @@ int asft_serial_init(char *devname, char *baudrate_string, size_t pkt_len_max)
     asft_serial_cleanup();
 
     p.pkt_len_max = pkt_len_max;
-    /* Worst case data length + Start/End Flags + Worst case checksum */
-    p.frame_len_max = 2 * pkt_len_max + 2 + 2;
+    p.frame_rx_len_max = pkt_len_max + ((pkt_len_max / 254) + 1) /* overhead */;
+    p.frame_tx_len_max = p.frame_rx_len_max + 2 /* start and stop delimiter */;
 
     p.pkt_rx_buf = malloc(pkt_len_max + 1 /* checksum */);
     if (!p.pkt_rx_buf) {
@@ -137,9 +162,15 @@ int asft_serial_init(char *devname, char *baudrate_string, size_t pkt_len_max)
         goto error;
     }
 
-    p.frame_tx_buf = malloc(p.frame_len_max);
+    p.frame_tx_buf = malloc(p.frame_tx_len_max);
     if (!p.frame_tx_buf) {
         asft_error("Serial output frame buffer allocation failed\n");
+        goto error;
+    }
+
+    p.frame_rx_buf = malloc(p.frame_rx_len_max);
+    if (!p.frame_rx_buf) {
+        asft_error("Serial input frame buffer allocation failed\n");
         goto error;
     }
 
@@ -192,8 +223,8 @@ int asft_serial_init(char *devname, char *baudrate_string, size_t pkt_len_max)
     }
     tcflush(p.fd, TCIOFLUSH);
 
-    asft_info("Serial port %s %s baud. Packet size %lu worst case MTU %lu.\n",
-           devname, baudrate_string, pkt_len_max, p.frame_len_max);
+    asft_info("Serial port %s %s baud. Maximum frame length %lu bytes.\n",
+           devname, baudrate_string, p.frame_tx_len_max);
 
     return 0;
 
@@ -219,7 +250,11 @@ int asft_serial_send(unsigned char *pkt, size_t pkt_len)
         return -EINVAL;
     }
 
-    frame_len = hdlc_encode(p.frame_tx_buf, pkt, pkt_len);
+    p.frame_tx_buf[1] = 0;
+    frame_len = 1;
+    frame_len += cobs_encode(pkt, pkt_len, &p.frame_tx_buf[1]);
+    p.frame_tx_buf[frame_len] = 0;
+    frame_len++;
 
     pos = p.frame_tx_buf;
     bytes_remaining = frame_len;
@@ -241,6 +276,7 @@ int asft_serial_send(unsigned char *pkt, size_t pkt_len)
 int asft_serial_receive(unsigned char **buf_ptr, size_t *len_ptr)
 {
     bool had_read = false;
+    size_t pkt_rx_len;
 
     *buf_ptr = NULL;
     *len_ptr = 0;
@@ -250,7 +286,7 @@ int asft_serial_receive(unsigned char **buf_ptr, size_t *len_ptr)
     }
 
     if (p.bytes_remaining) {
-        goto hdlc_decode;
+        goto decode;
     }
 
 again:
@@ -267,60 +303,27 @@ again:
     }
     p.bytes_remaining = p.bytes_read;
 
-hdlc_decode:
+decode:
 
     while (p.bytes_remaining) {
         unsigned char c = p.read_buf[p.bytes_read - p.bytes_remaining];
         p.bytes_remaining--;
 
-        if (c == HDLC_FLAG_BYTE && p.hdlc_state == HDLC_IDLE) {
-            p.hdlc_state = HDLC_NORM;
-            p.pkt_len = 0;
-            p.checksum_local = 0;
-        } else if (c == HDLC_FLAG_BYTE && p.hdlc_state == HDLC_ESC) {
-            asft_debug("HDLC flag after escape\n");
-            p.hdlc_state = HDLC_IDLE;
-            p.pkt_len = 0;
-            p.checksum_local = 0;
-        } else if (c == HDLC_FLAG_BYTE && p.hdlc_state == HDLC_NORM) {
-            if (p.pkt_len > 1) {
-                p.checksum_local -= p.pkt_rx_buf[p.pkt_len - 1];
-                if (p.checksum_local == p.pkt_rx_buf[p.pkt_len - 1]) {
-                    /* Frame received */
-                    *buf_ptr = p.pkt_rx_buf;
-                    *len_ptr = p.pkt_len - 1;
-                    p.pkt_len = 0;
-                    p.checksum_local = 0;
-                    return 1;
-                } else {
-                    asft_debug("HDLC frame checksum mismatch\n");
-                    p.hdlc_state = HDLC_IDLE;
-                    p.pkt_len = 0;
-                    p.checksum_local = 0;
-                }
-            } else {
-                p.pkt_len = 0;
-                p.checksum_local = 0;
+        if (c == 0x00) {
+            if (p.frame_rx_len) {
+                /* Frame received */
+                pkt_rx_len = cobs_decode(p.frame_rx_buf, p.frame_rx_len, p.pkt_rx_buf);
+                p.frame_rx_len = 0;
+                *buf_ptr = p.pkt_rx_buf;
+                *len_ptr = pkt_rx_len;
+                return 1;
             }
-        } else if (c == HDLC_ESC_BYTE && p.hdlc_state == HDLC_NORM) {
-            p.hdlc_state = HDLC_ESC;
-        } else if (p.hdlc_state == HDLC_IDLE) {
-            /* Ignore input byte */
+        } else if (p.frame_rx_len > p.frame_rx_len_max) {
+            asft_debug("Received frame too long\n");
+            p.frame_rx_len = 0;
         } else {
-            if (p.hdlc_state == HDLC_ESC) {
-                c ^= HDLC_ESC_MASK;
-                p.hdlc_state = HDLC_NORM;
-            }
-            if (p.pkt_len > p.pkt_len_max) {
-                asft_debug("HDLC frame too long\n");
-                p.hdlc_state = HDLC_IDLE;
-                p.pkt_len = 0;
-                p.checksum_local = 0;
-            } else {
-                p.checksum_local += c;
-                p.pkt_rx_buf[p.pkt_len] = c;
-                p.pkt_len++;
-            }
+            p.frame_rx_buf[p.frame_rx_len] = c;
+            p.frame_rx_len++;
         }
     }
 
