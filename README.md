@@ -7,7 +7,7 @@ Minimum line requirements are:
 
 * 8 bits (8N1)
 * Half-duplex. Full duplex is supported as well.
-* By default, maximum packet size is ~250 bytes. Can be reduced if needed.
+* By default, maximum frame size is 222 bytes. Can be reduced if needed.
 
 Examples:
 
