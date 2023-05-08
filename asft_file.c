@@ -69,10 +69,10 @@ int asft_file_src_open(struct asft_file_ctx *c, char *dir)
         if (e->d_name[0] == '.')
             continue;
         if (snprintf(path, sizeof(path), "%s/%s", dir, e->d_name) < 0)
-            continue;
+            goto error;
         path[sizeof(path) - 1] = 0;
         if (stat64(path, &s))
-            continue;
+            goto error;
         if (s.st_size > UINT32_MAX)
             continue;
         name_len = strlen(e->d_name);
