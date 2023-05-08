@@ -12,6 +12,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <stdbool.h>
 
 #include "asft_misc.h"
 #include "asft_proto.h"
@@ -53,8 +54,11 @@ int asft_file_src_open(struct asft_file_ctx *c, char *dir)
     DIR *d;
     struct dirent *e;
     char path[1024];
-    struct stat64 s;
+    struct stat64 s, ls;
     unsigned int name_len;
+    struct timespec ctime_min = {0};
+    bool ctime_min_valid = false;
+    int fd;
 
     asft_file_reset(c);
     d = opendir(dir);
@@ -78,10 +82,28 @@ int asft_file_src_open(struct asft_file_ctx *c, char *dir)
         name_len = strlen(e->d_name);
         if (name_len > ASFT_FILE_NAME_LEN)
             continue;
-        c->fd = open(path, O_RDONLY, 0);
-        if (c->fd < 0)
+        if (lstat64(path, &ls))
+            goto error;
+        if (
+            ctime_min_valid &&
+            (
+                (ls.st_ctim.tv_sec > ctime_min.tv_sec) ||
+                (
+                    (ls.st_ctim.tv_sec == ctime_min.tv_sec) &&
+                    (ls.st_ctim.tv_nsec > ctime_min.tv_nsec)
+                )
+            )
+        )
+            continue;
+        fd = open(path, O_RDONLY, 0);
+        if (fd < 0)
             continue;
 
+        ctime_min = ls.st_ctim;
+        ctime_min_valid = true;
+
+        asft_file_reset(c);
+        c->fd = fd;
         c->size = s.st_size;
         c->left = c->size;
         c->name = strdup(e->d_name);
@@ -91,8 +113,6 @@ int asft_file_src_open(struct asft_file_ctx *c, char *dir)
         c->blocks = size_to_blocks(c->size);
         if (!c->name || !c->path)
             goto error;
-
-        break;
     }
 
     closedir(d);

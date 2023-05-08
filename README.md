@@ -86,6 +86,9 @@ The same `to_label` directory can be used if your temporary file name is beginni
 And then move/rename file or create a symlink in `to_label` directory.
 The file is ready for transfer.
 
+When multiple files are available, they are transferred in ascending "ctime" order.
+In other words, the file moved first or symlink created first in `to_label` directory is transferred first.
+
 ## Gateway operation
 
 The gateway performs the following operations for each configured node in a loop:
