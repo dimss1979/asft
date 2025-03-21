@@ -39,7 +39,7 @@ static int gateway_init()
         asft_error("Gateway not specified\n");
         goto error;
     }
-    if(asft_kdf(&gw.ikey, gw.password)) {
+    if(asft_kdf(&gw.ikey, gw.password, strlen(gw.password))) {
         asft_error("Gateway initial key derivation failed\n");
         goto error;
     }

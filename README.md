@@ -217,22 +217,24 @@ You're advised to use long and hard to guess passwords.
 
 ## Security
 
-Each node is addressed by its password.
-Also, all nodes share common network name.
+The gateway and all its nodes share a common network name.
+Each node is addressed by a combination of its password and network name.
 
-Initial encryption key is derived from network name and node password using "scrypt" function.
-Session key is derived using "X25519" elliptic curve Diffie-Hellman algorithm followed by "sha3-256".
+All encryption keys are derived using HKDF(SHA3-512).
+Network name is used as a salt.
+Initial key is derived from node password.
+Session key is derived from "X25519" ECDH shared secret.
 
-Each encryption key consists of two parts: inner and outer key. Inner key is derived as described above. Outer key is "sha3-256" of inner key.
+Each encryption key consists of two parts: inner and outer key.
 
 Each packet is encryted and authenticated using "chacha20-poly1305" and inner key.
 Packet number is used as initialization vector.
 To randomize packet contents even further, packet number (initialization vector) is additionally encrypted using "chacha20" and outer key.
 Authentication tag produced by "chacha20-poly1305" is used as initialization vector for "chacha20".
 
-During session key exchange, packets are encrypted using initial key derived from password and network name.
+During session key exchange, ECDH packets are authenticated and encrypted using the initial key.
 Random packet number is used.
-All subsequent operations are encrypted using session key.
+All subsequent operations are authenticated and encrypted using session key.
 Packet numbers start from zero and then are incremented.
 Requests have even packet numbers.
 Responses have odd packet numbers.

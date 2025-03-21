@@ -214,7 +214,7 @@ static int nodes_init()
 
     n = node_first;
     while (n) {
-        if (asft_kdf(&n->ikey, n->password)) {
+        if (asft_kdf(&n->ikey, n->password, strlen(n->password))) {
             asft_error("Node '%s' initial key derivation failed\n", n->label);
             goto error;
         }

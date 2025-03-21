@@ -6,6 +6,7 @@
 #include <sys/random.h>
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
+#include <openssl/core_names.h>
 
 #include "asft_proto.h"
 #include "asft_misc.h"
@@ -44,25 +45,6 @@ static void ecdh_cleanup(struct asft_ecdh *ecdh)
         }
         free(ecdh);
     }
-}
-
-static int derive_outer_key(
-    unsigned char *key_outer,
-    unsigned char *key_inner
-) {
-    unsigned int md_size;
-
-    if (EVP_Digest(key_inner, ASFT_KEY_LEN, key_outer, &md_size, EVP_sha3_256(), NULL) != 1)
-        goto error;
-
-    if (md_size != ASFT_KEY_LEN)
-        goto error;
-
-    return 0;
-
-error:
-
-    return 1;
 }
 
 size_t asft_crypto_init()
@@ -160,7 +142,6 @@ int asft_ecdh_process(
     EVP_PKEY *peer_key = NULL;
     EVP_PKEY_CTX *pctx = NULL;
     size_t skeylen;
-    unsigned int md_size;
     unsigned char shared_secret[ASFT_ECDH_KEY_LEN];
 
     if (!c)
@@ -189,13 +170,7 @@ int asft_ecdh_process(
     if (EVP_PKEY_derive(pctx, shared_secret, &skeylen) <= 0)
         goto error;
 
-    if (EVP_Digest(shared_secret, sizeof(shared_secret), skey_out->inner, &md_size, EVP_sha3_256(), NULL) != 1)
-        goto error;
-
-    if (md_size != ASFT_KEY_LEN)
-        goto error;
-
-    if (derive_outer_key(skey_out->outer, skey_out->inner))
+    if (asft_kdf(skey_out, shared_secret, sizeof(shared_secret)))
         goto error;
 
     rv = 0;
@@ -324,20 +299,18 @@ error:
 
 int asft_kdf(
     struct asft_key *key,
-    char *password
+    void *keymat,
+    size_t keymat_len
 ) {
     int rv = 1;
     EVP_KDF *kdf = NULL;
     EVP_KDF_CTX *kctx = NULL;
-    OSSL_PARAM params[6], *p = params;
-    uint64_t scrypt_n = 8192;
-    uint32_t scrypt_r = 8;
-    uint32_t scrypt_p = 1;
+    OSSL_PARAM params[4], *p = params;
 
-    if (!network_name || !password)
+    if (!network_name || !keymat)
         goto error;
 
-    kdf = EVP_KDF_fetch(NULL, "SCRYPT", NULL);
+    kdf = EVP_KDF_fetch(NULL, "HKDF", NULL);
     if (!kdf)
         goto error;
 
@@ -345,17 +318,12 @@ int asft_kdf(
     if (!kctx)
         goto error;
 
-    *p++ = OSSL_PARAM_construct_octet_string("pass", password, strlen(password));
-    *p++ = OSSL_PARAM_construct_octet_string("salt", network_name, strlen(network_name));
-    *p++ = OSSL_PARAM_construct_uint64("n", &scrypt_n);
-    *p++ = OSSL_PARAM_construct_uint32("r", &scrypt_r);
-    *p++ = OSSL_PARAM_construct_uint32("p", &scrypt_p);
+    *p++ = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_DIGEST, SN_sha3_512, strlen(SN_sha3_512));
+    *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_KEY, keymat, keymat_len);
+    *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_SALT, network_name, strlen(network_name));
     *p = OSSL_PARAM_construct_end();
 
-    if (EVP_KDF_derive(kctx, key->inner, sizeof(key->inner), params) <= 0)
-        goto error;
-
-    if (derive_outer_key(key->outer, key->inner))
+    if (EVP_KDF_derive(kctx, (unsigned char*) key, sizeof(*key), params) <= 0)
         goto error;
 
     rv = 0;

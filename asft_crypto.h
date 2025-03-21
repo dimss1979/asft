@@ -42,7 +42,8 @@ int asft_packet_decrypt(
 
 int asft_kdf(
     struct asft_key *key,
-    char *password
+    void *keymat,
+    size_t keymat_len
 );
 
 #endif
