@@ -9,11 +9,11 @@
 #define ASFT_BLOCK_LEN  200
 
 struct asft_base_hdr {
+    uint8_t tag[ASFT_TAG_LEN];
     union {
         uint32_t packet_number;
-        unsigned char pn[4];
+        uint8_t pn[4];
     };
-    uint8_t tag[ASFT_TAG_LEN];
     uint8_t command;
 } __attribute__((packed));
 

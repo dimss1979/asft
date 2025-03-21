@@ -8,8 +8,8 @@
 struct asft_ecdh;
 
 struct asft_key {
-    unsigned char outer[ASFT_KEY_LEN];
-    unsigned char inner[ASFT_KEY_LEN];
+    unsigned char enc[ASFT_KEY_LEN];
+    unsigned char auth[ASFT_KEY_LEN];
 };
 
 size_t asft_crypto_init(void);

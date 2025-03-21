@@ -220,21 +220,16 @@ You're advised to use long and hard to guess passwords.
 The gateway and all its nodes share a common network name.
 Each node is addressed by a combination of its password and network name.
 
-All encryption keys are derived using HKDF(SHA3-512).
+All keys are derived using HKDF(BLAKE2b).
 Network name is used as a salt.
 Initial key is derived from node password.
 Session key is derived from "X25519" ECDH shared secret.
 
-Each encryption key consists of two parts: inner and outer key.
+Each key consists of two parts: authentication and encryption key.
 
-Each packet is encryted and authenticated using "chacha20-poly1305" and inner key.
-Packet number is used as initialization vector.
-To randomize packet contents even further, packet number (initialization vector) is additionally encrypted using "chacha20" and outer key.
-Authentication tag produced by "chacha20-poly1305" is used as initialization vector for "chacha20".
+Each packet is authenticated using HMAC(BLAKE2b) and authentication key.
+Then, the packet is encrypted using "chacha20" and encryption key.
+Authentication tag is used as initialization vector for "chacha20".
 
 During session key exchange, ECDH packets are authenticated and encrypted using the initial key.
-Random packet number is used.
 All subsequent operations are authenticated and encrypted using session key.
-Packet numbers start from zero and then are incremented.
-Requests have even packet numbers.
-Responses have odd packet numbers.

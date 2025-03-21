@@ -7,6 +7,7 @@
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
 #include <openssl/core_names.h>
+#include <openssl/hmac.h>
 
 #include "asft_proto.h"
 #include "asft_misc.h"
@@ -191,13 +192,12 @@ int asft_packet_encrypt(
     size_t pkt_len,
     struct asft_key *key
 ) {
-    int outlen, tmplen;
+    int tmplen;
     struct asft_base_hdr *h = (struct asft_base_hdr*) pkt;
-    unsigned char *from = (unsigned char *) &h->command;
-    unsigned char *to = (unsigned char *) &g_pkt->base.command;
-    size_t enc_len = pkt_len - sizeof(*h) + sizeof(h->command);
-    unsigned char nonce_inner[CHACHA20_POLY1305_MAX_IVLEN] = {0};
-    unsigned char nonce_outer[CHACHA20_MAX_IVLEN] = {0};
+    unsigned char *from = (unsigned char *) &h->packet_number;
+    unsigned char *to = (unsigned char *) &g_pkt->base.packet_number;
+    size_t enc_len = pkt_len - ASFT_TAG_LEN;
+    unsigned char nonce[CHACHA20_MAX_IVLEN] = {0};
 
     if (!g_ctx)
         goto error;
@@ -208,29 +208,21 @@ int asft_packet_encrypt(
     if (pkt_len < sizeof(struct asft_base_hdr))
         goto error;
 
-    memcpy(nonce_inner, h->pn, sizeof(h->pn));
+    unsigned char *hmac = HMAC(EVP_blake2b512(), key->auth, sizeof(key->auth), from, enc_len, NULL, NULL);
 
-    if (!EVP_EncryptInit_ex(g_ctx, EVP_chacha20_poly1305(), NULL, key->inner, nonce_inner))
+    if (!hmac)
         goto error;
 
-    if (!EVP_EncryptUpdate(g_ctx, to, &outlen, from, enc_len))
+    memcpy(g_pkt->base.tag, hmac, sizeof(g_pkt->base.tag));
+    memcpy(nonce, g_pkt->base.tag, sizeof(g_pkt->base.tag));
+
+    if (!EVP_EncryptInit_ex(g_ctx, EVP_chacha20(), NULL, key->enc, nonce))
         goto error;
 
-    if (!EVP_EncryptFinal_ex(g_ctx, &to[outlen], &tmplen))
+    if (!EVP_EncryptUpdate(g_ctx, to, &tmplen, from, enc_len))
         goto error;
 
-    if (!EVP_CIPHER_CTX_ctrl(g_ctx, EVP_CTRL_AEAD_GET_TAG, ASFT_TAG_LEN, &g_pkt->base.tag))
-        goto error;
-
-    memcpy(nonce_outer, &g_pkt->base.tag, sizeof(g_pkt->base.tag));
-
-    if (!EVP_EncryptInit_ex(g_ctx, EVP_chacha20(), NULL, key->outer, nonce_outer))
-        goto error;
-
-    if (!EVP_EncryptUpdate(g_ctx, g_pkt->base.pn, &outlen, h->pn, sizeof(h->pn)))
-        goto error;
-
-    if (!EVP_EncryptFinal_ex(g_ctx, &g_pkt->base.pn[outlen], &tmplen))
+    if (!EVP_EncryptFinal_ex(g_ctx, to + tmplen, &tmplen))
         goto error;
 
     *cpkt_ptr = g_pkt;
@@ -247,13 +239,12 @@ int asft_packet_decrypt(
     size_t cpkt_len,
     struct asft_key *key
 ) {
-    int outlen, tmplen;
+    int tmplen;
     struct asft_base_hdr *h = &cpkt->base;
-    unsigned char *from = (unsigned char *) &h->command;
-    unsigned char *to = (unsigned char *) &g_pkt->base.command;
-    size_t dec_len = cpkt_len - sizeof(*h) + sizeof(h->command);
-    unsigned char nonce_inner[CHACHA20_POLY1305_MAX_IVLEN] = {0};
-    unsigned char nonce_outer[CHACHA20_MAX_IVLEN] = {0};
+    unsigned char *from = (unsigned char *) &h->packet_number;
+    unsigned char *to = (unsigned char *) &g_pkt->base.packet_number;
+    size_t dec_len = cpkt_len - ASFT_TAG_LEN;
+    unsigned char nonce[CHACHA20_MAX_IVLEN] = {0};
 
     if (!g_ctx)
         goto error;
@@ -264,29 +255,20 @@ int asft_packet_decrypt(
     if (cpkt_len < sizeof(struct asft_base_hdr))
         goto error;
 
-    memcpy(nonce_outer, &h->tag, sizeof(h->tag));
+    memcpy(nonce, &h->tag, sizeof(h->tag));
 
-    if (!EVP_DecryptInit_ex(g_ctx, EVP_chacha20(), NULL, key->outer, nonce_outer))
+    if (!EVP_DecryptInit_ex(g_ctx, EVP_chacha20(), NULL, key->enc, nonce))
         goto error;
 
-    if (!EVP_DecryptUpdate(g_ctx, g_pkt->base.pn, &outlen, h->pn, sizeof(h->pn)))
+    if (!EVP_DecryptUpdate(g_ctx, to, &tmplen, from, dec_len))
         goto error;
 
-    if (!EVP_DecryptFinal_ex(g_ctx, &g_pkt->base.pn[outlen], &tmplen))
+    if (!EVP_DecryptFinal_ex(g_ctx, to + tmplen, &tmplen))
         goto error;
 
-    memcpy(nonce_inner, g_pkt->base.pn, sizeof(g_pkt->base.pn));
+    unsigned char *hmac = HMAC(EVP_blake2b512(), key->auth, sizeof(key->auth), to, dec_len, NULL, NULL);
 
-    if (!EVP_DecryptInit_ex(g_ctx, EVP_chacha20_poly1305(), NULL, key->inner, nonce_inner))
-        goto error;
-
-    if (!EVP_CIPHER_CTX_ctrl(g_ctx, EVP_CTRL_AEAD_SET_TAG, ASFT_TAG_LEN, h->tag))
-        goto error;
-
-    if (!EVP_DecryptUpdate(g_ctx, to, &outlen, from, dec_len))
-        goto error;
-
-    if (!EVP_DecryptFinal_ex(g_ctx, &to[outlen], &tmplen))
+    if (!hmac || CRYPTO_memcmp(hmac, h->tag, sizeof(h->tag)))
         goto error;
 
     *pkt_ptr = g_pkt;
@@ -318,7 +300,7 @@ int asft_kdf(
     if (!kctx)
         goto error;
 
-    *p++ = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_DIGEST, SN_sha3_512, strlen(SN_sha3_512));
+    *p++ = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_DIGEST, SN_blake2b512, strlen(SN_blake2b512));
     *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_KEY, keymat, keymat_len);
     *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_SALT, network_name, strlen(network_name));
     *p = OSSL_PARAM_construct_end();
