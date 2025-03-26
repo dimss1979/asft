@@ -1,27 +1,30 @@
 #ifndef _ASFT_FILE_H_
 #define _ASFT_FILE_H_
 
-struct asft_file_ctx {
-    int fd;
-    char *name;
-    unsigned int name_len;
+#include "asft_proto.h"
+
+struct asft_blob_tx {
+    uint8_t *auth_key;
+    uint8_t *blob;
     char *path;
-    char *path_tmp;
-    uint32_t size;
-    uint32_t left;
-    uint32_t block;
-    uint32_t blocks;
-    unsigned char data[ASFT_BLOCK_LEN];
-    unsigned int data_len;
+    size_t blob_len;
+    size_t blob_pos;
 };
 
-void asft_file_init(struct asft_file_ctx *c);
-void asft_file_reset(struct asft_file_ctx *c);
-int asft_file_src_open(struct asft_file_ctx *c, char *dir);
-int asft_file_dst_open(struct asft_file_ctx *c, char *dir, char *name, unsigned int name_len, uint32_t size);
-int asft_file_src_read(struct asft_file_ctx *c, void *data, unsigned int data_len);
-int asft_file_dst_write(struct asft_file_ctx *c, void *data, unsigned int data_len);
-int asft_file_src_complete(struct asft_file_ctx *c);
-int asft_file_dst_complete(struct asft_file_ctx *c);
+struct asft_blob_rx {
+    uint8_t *auth_key;
+    uint8_t *blob;
+    size_t blob_len;
+    uint16_t last_block_idx;
+    uint8_t last_block[ASFT_BLOCK_LEN];
+    uint8_t ack;
+};
+
+void asft_blob_tx_init(struct asft_blob_tx *tx, char *dir);
+void asft_blob_tx_send(struct asft_blob_tx *tx, uint16_t *pkt_block_idx, uint8_t *pkt_data);
+void asft_blob_tx_ack(struct asft_blob_tx *tx, uint8_t ack);
+
+void asft_blob_rx_receive(struct asft_blob_rx *rx, uint16_t pkt_block_idx, uint8_t *pkt_data, char *dir);
+void asft_blob_rx_get_ack(struct asft_blob_rx *rx, uint8_t *ack);
 
 #endif /* _ASFT_FILE_H_ */

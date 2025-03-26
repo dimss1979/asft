@@ -5,8 +5,7 @@
 
 #define ASFT_TAG_LEN   10
 #define ASFT_ECDH_KEY_LEN  32
-#define ASFT_FILE_NAME_LEN  200
-#define ASFT_BLOCK_LEN  200
+#define ASFT_BLOCK_LEN  100
 
 struct asft_base_hdr {
     uint8_t tag[ASFT_TAG_LEN];
@@ -22,52 +21,33 @@ struct asft_cmd_ecdh {
     uint8_t public_key[ASFT_ECDH_KEY_LEN];
 } __attribute__((packed));
 
-struct asft_cmd_file_info {
+
+struct asft_cmd_nodata {
     struct asft_base_hdr base;
-    uint32_t size;
-    uint8_t name[ASFT_FILE_NAME_LEN];
+    uint8_t ack;
 } __attribute__((packed));
 
-struct asft_cmd_get_block_req {
+struct asft_cmd_data {
     struct asft_base_hdr base;
-    uint32_t block;
-} __attribute__((packed));
-
-struct asft_cmd_get_block_rsp {
-    struct asft_base_hdr base;
-    uint8_t data[ASFT_BLOCK_LEN];
-} __attribute__((packed));
-
-struct asft_cmd_put_block_req {
-    struct asft_base_hdr base;
-    uint32_t block;
+    uint8_t ack;
+    uint16_t block_idx;
     uint8_t data[ASFT_BLOCK_LEN];
 } __attribute__((packed));
 
 typedef union {
     struct asft_base_hdr base;
     struct asft_cmd_ecdh ecdh;
-    struct asft_cmd_file_info file_info;
-    struct asft_cmd_get_block_req get_block_req;
-    struct asft_cmd_get_block_rsp get_block_rsp;
-    struct asft_cmd_put_block_req put_block_req;
+    struct asft_cmd_nodata nodata;
+    struct asft_cmd_data data;
 } __attribute__((packed)) asft_packet;
 
 enum asft_command {
     ASFT_REQ_ECDH_KEY = 0,
-    ASFT_REQ_GET_FILE,
-    ASFT_REQ_GET_BLOCK,
-    ASFT_REQ_UPLOAD_COMPLETE,
-    ASFT_REQ_PUT_FILE,
-    ASFT_REQ_PUT_BLOCK,
+    ASFT_REQ_NODATA,
+    ASFT_REQ_DATA,
     ASFT_RSP_ECDH_KEY = 128,
-    ASFT_RSP_GET_FILE_ACK,
-    ASFT_RSP_GET_FILE_NAK,
-    ASFT_RSP_GET_BLOCK,
-    ASFT_RSP_UPLOAD_COMPLETE,
-    ASFT_RSP_PUT_FILE,
-    ASFT_RSP_PUT_BLOCK,
-    ASFT_RSP_ERROR = 255
+    ASFT_RSP_NODATA,
+    ASFT_RSP_DATA,
 };
 
 #endif /* _ASFT_PROTO_H_ */

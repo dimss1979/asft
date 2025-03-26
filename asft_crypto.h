@@ -10,6 +10,7 @@ struct asft_ecdh;
 struct asft_key {
     unsigned char enc[ASFT_KEY_LEN];
     unsigned char auth[ASFT_KEY_LEN];
+    unsigned char auth_blob[ASFT_KEY_LEN];
 };
 
 size_t asft_crypto_init(void);
