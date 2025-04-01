@@ -89,7 +89,7 @@ static int read_config_file(char *filename)
                 asft_error("No baudrate specified on line %i\n", line_number);
                 goto error;
             }
-            if (asft_serial_init(device_name, baudrate, sizeof(asft_packet))) {
+            if (asft_serial_init(device_name, baudrate, sizeof(asft_pkt))) {
                 asft_error("Cannot initialize serial port on line %i\n", line_number);
                 goto error;
             }

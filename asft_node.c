@@ -22,8 +22,10 @@ static struct gateway
     char *label;
     char *password;
 
-    struct asft_key ikey;
-    struct asft_key skey;
+    struct asft_key ikey_req;
+    struct asft_key ikey_resp;
+    struct asft_key skey_req;
+    struct asft_key skey_resp;
     struct asft_ecdh *ecdh;
     bool have_skey;
 
@@ -41,12 +43,16 @@ static int gateway_init()
         asft_error("Gateway not specified\n");
         goto error;
     }
-    if(asft_kdf(&gw.ikey, gw.password, strlen(gw.password))) {
+    if(asft_kdf(&gw.ikey_req, gw.password, strlen(gw.password), asft_crypto_init_key_req)) {
         asft_error("Gateway initial key derivation failed\n");
         goto error;
     }
-    gw.blob_tx.auth_key = gw.ikey.auth_blob;
-    gw.blob_rx.auth_key = gw.ikey.auth_blob;
+    if(asft_kdf(&gw.ikey_resp, gw.password, strlen(gw.password), asft_crypto_init_key_resp)) {
+        asft_error("Gateway initial key derivation failed\n");
+        goto error;
+    }
+    gw.blob_tx.auth_key = gw.ikey_resp.auth_blob;
+    gw.blob_rx.auth_key = gw.ikey_req.auth_blob;
     if (asprintf(&gw.upload_dir, "to_%s", gw.label) < 0)
         goto error;
     if (asprintf(&gw.download_dir, "from_%s", gw.label) < 0)
@@ -59,18 +65,14 @@ error:
     return -1;
 }
 
-static void process_req_ecdh(asft_packet *req, size_t req_len, asft_packet *resp, size_t *resp_len)
+static void process_req_ecdh(asft_pkt *req, asft_pkt *resp, size_t *resp_len)
 {
-    if (req_len != sizeof(req->ecdh))
-        goto error;
-
     if (asft_ecdh_prepare(&gw.ecdh, resp->ecdh.public_key))
         goto error;
 
-    if (asft_ecdh_process(&gw.ecdh, req->ecdh.public_key, &gw.skey))
+    if (asft_ecdh_process(&gw.ecdh, req->ecdh.public_key, &gw.skey_req, &gw.skey_resp))
         goto error;
 
-    resp->base.command = ASFT_RSP_ECDH_KEY;
     *resp_len = sizeof(resp->ecdh);
     gw.have_skey = true;
     gw.last_packet_number = 0;
@@ -86,7 +88,7 @@ error:
     return;
 }
 
-static void process_req_data(asft_packet *req, size_t req_len, asft_packet *resp, size_t *resp_len, bool have_data)
+static void process_req_data(asft_pkt *req, asft_pkt *resp, size_t *resp_len, bool have_data)
 {
     uint8_t ack;
     if (have_data) {
@@ -99,7 +101,6 @@ static void process_req_data(asft_packet *req, size_t req_len, asft_packet *resp
     asft_blob_tx_init(&gw.blob_tx, gw.upload_dir);
 
     if (gw.blob_tx.blob) {
-        resp->base.command = ASFT_RSP_DATA;
         *resp_len = sizeof(resp->data);
 
         uint16_t block_idx = 0;
@@ -107,7 +108,6 @@ static void process_req_data(asft_packet *req, size_t req_len, asft_packet *resp
         resp->data.block_idx = htobe16(block_idx);
         asft_blob_rx_get_ack(&gw.blob_rx, &resp->data.ack);
     } else {
-        resp->base.command = ASFT_RSP_NODATA;
         *resp_len = sizeof(resp->nodata);
         asft_blob_rx_get_ack(&gw.blob_rx, &resp->nodata.ack);
     }
@@ -123,13 +123,11 @@ int asft_node_loop()
 
     while (1) {
         int rv = 0;
-        asft_packet *pkt = NULL;
-        asft_packet *cpkt = NULL;
+        asft_pkt *pkt = NULL;
+        asft_pkt *cpkt = NULL;
         size_t pkt_len = 0;
-        struct asft_base_hdr *dh;
-        asft_packet resp, *cresp = NULL;
+        asft_pkt resp, *cresp = NULL;
         size_t resp_len = 0;
-        enum {D_NKEY, D_IKEY, D_SKEY} decryption_key = D_NKEY;
         uint32_t rx_packet_number;
 
         rv = asft_serial_receive((unsigned char**) &cpkt, &pkt_len);
@@ -143,17 +141,17 @@ int asft_node_loop()
 
         asft_debug("Received %u bytes\n", pkt_len);
 
-        if (gw.have_skey) {
-            rv = asft_packet_decrypt(&pkt, cpkt, pkt_len, &gw.skey);
+        if (gw.have_skey && pkt_len != ASFT_PKT_LEN_ECDH) {
+            rv = asft_pkt_decrypt(&pkt, cpkt, pkt_len, &gw.skey_req);
             if (!rv && pkt) {
-                decryption_key = D_SKEY;
                 goto decrypted;
             }
         }
-        rv = asft_packet_decrypt(&pkt, cpkt, pkt_len, &gw.ikey);
-        if (!rv && pkt) {
-            decryption_key = D_IKEY;
-            goto decrypted;
+        if (pkt_len == ASFT_PKT_LEN_ECDH) {
+            rv = asft_pkt_decrypt(&pkt, cpkt, pkt_len, &gw.ikey_req);
+            if (!rv && pkt) {
+                goto decrypted;
+            }
         }
 
         asft_debug("Decryption failed\n");
@@ -161,46 +159,38 @@ int asft_node_loop()
 
 decrypted:
 
-        dh = &pkt->base;
-
-        if (dh->command == ASFT_REQ_ECDH_KEY && decryption_key != D_IKEY) {
-            asft_error("Key exchange must be encrypted with initial key\n");
-            continue;
-        } else if (dh->command != ASFT_REQ_ECDH_KEY && decryption_key != D_SKEY) {
-            asft_error("Command %u is not encrypted with session key\n", dh->command);
-            continue;
-        }
-
         rx_packet_number = be32toh(pkt->base.packet_number);
-        if (decryption_key == D_SKEY && rx_packet_number <= gw.last_packet_number) {
-            asft_error("Packet number %u, last was %u\n", rx_packet_number, gw.last_packet_number);
-            continue;
-        }
-        if (decryption_key != D_IKEY) {
+        if (pkt_len != ASFT_PKT_LEN_ECDH) {
+            if (rx_packet_number <= gw.last_packet_number) {
+                asft_error("Repeated packet number %u, last was %u\n", rx_packet_number, gw.last_packet_number);
+                continue;
+            }
             gw.last_packet_number = rx_packet_number;
+        } else {
+            // TODO ECDH replay protection
         }
 
-        struct asft_key *ckey = &gw.skey;
-        switch (dh->command)
+        struct asft_key *key_resp = &gw.skey_resp;
+        switch (pkt_len)
         {
-            case ASFT_REQ_ECDH_KEY:
-                process_req_ecdh(pkt, pkt_len, &resp, &resp_len);
-                ckey = &gw.ikey;
+            case ASFT_PKT_LEN_ECDH:
+                process_req_ecdh(pkt, &resp, &resp_len);
+                key_resp = &gw.ikey_resp;
                 break;
-            case ASFT_REQ_NODATA:
-                process_req_data(pkt, pkt_len, &resp, &resp_len, false);
+            case ASFT_PKT_LEN_NODATA:
+                process_req_data(pkt, &resp, &resp_len, false);
                 break;
-            case ASFT_REQ_DATA:
-                process_req_data(pkt, pkt_len, &resp, &resp_len, true);
+            case ASFT_PKT_LEN_DATA:
+                process_req_data(pkt, &resp, &resp_len, true);
                 break;
             default:
-                asft_error("Unknown command %u\n", dh->command);
+                asft_error("Unknown request length %u bytes\n", pkt_len);
         }
 
         if (resp_len) {
             resp.base.packet_number = htobe32(rx_packet_number);
 
-            if (asft_packet_encrypt(&cresp, &resp, resp_len, ckey)) {
+            if (asft_pkt_encrypt(&cresp, &resp, resp_len, key_resp)) {
                 asft_error("Response encryption failed\n");
                 return 1;
             }

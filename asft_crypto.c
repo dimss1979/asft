@@ -14,14 +14,16 @@
 
 #include "asft_crypto.h"
 
-#define CHACHA20_POLY1305_MAX_IVLEN 12
 #define CHACHA20_MAX_IVLEN 16
+
+char *asft_crypto_init_key_req  = "Initial key for request";
+char *asft_crypto_init_key_resp = "Initial key for response";
 
 struct asft_ecdh {
     EVP_PKEY *pkey;
 };
 
-static asft_packet *g_pkt = NULL;
+static asft_pkt *g_pkt = NULL;
 static EVP_CIPHER_CTX *g_ctx = NULL;
 static char *network_name = NULL;
 
@@ -136,7 +138,8 @@ error:
 int asft_ecdh_process(
     struct asft_ecdh **ecdh,
     unsigned char *peer_pkey_in,
-    struct asft_key *skey_out
+    struct asft_key *skey_req,
+    struct asft_key *skey_resp
 ) {
     int rv = 1;
     struct asft_ecdh *c = *ecdh;
@@ -171,7 +174,10 @@ int asft_ecdh_process(
     if (EVP_PKEY_derive(pctx, shared_secret, &skeylen) <= 0)
         goto error;
 
-    if (asft_kdf(skey_out, shared_secret, sizeof(shared_secret)))
+    if (asft_kdf(skey_req, shared_secret, sizeof(shared_secret), "Session key for request"))
+        goto error;
+
+    if (asft_kdf(skey_resp, shared_secret, sizeof(shared_secret), "Session key for response"))
         goto error;
 
     rv = 0;
@@ -186,8 +192,8 @@ error:
     return rv;
 }
 
-int asft_packet_encrypt(
-    asft_packet **cpkt_ptr,
+int asft_pkt_encrypt(
+    asft_pkt **cpkt_ptr,
     void *pkt,
     size_t pkt_len,
     struct asft_key *key
@@ -202,7 +208,7 @@ int asft_packet_encrypt(
     if (!g_ctx)
         goto error;
 
-    if (pkt_len > sizeof(asft_packet))
+    if (pkt_len > sizeof(asft_pkt))
         goto error;
 
     if (pkt_len < sizeof(struct asft_base_hdr))
@@ -233,9 +239,9 @@ error:
     return -1;
 }
 
-int asft_packet_decrypt(
-    asft_packet **pkt_ptr,
-    asft_packet *cpkt,
+int asft_pkt_decrypt(
+    asft_pkt **pkt_ptr,
+    asft_pkt *cpkt,
     size_t cpkt_len,
     struct asft_key *key
 ) {
@@ -279,17 +285,19 @@ error:
     return -1;
 }
 
-int asft_kdf(
-    struct asft_key *key,
+int asft_kdf_once(
+    unsigned char *key,
     void *keymat,
-    size_t keymat_len
+    size_t keymat_len,
+    void *info_common,
+    void *info
 ) {
     int rv = 1;
     EVP_KDF *kdf = NULL;
     EVP_KDF_CTX *kctx = NULL;
-    OSSL_PARAM params[4], *p = params;
+    OSSL_PARAM params[6], *p = params;
 
-    if (!network_name || !keymat)
+    if (!network_name || !keymat || !info)
         goto error;
 
     kdf = EVP_KDF_fetch(NULL, "HKDF", NULL);
@@ -303,9 +311,11 @@ int asft_kdf(
     *p++ = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_DIGEST, SN_blake2b512, strlen(SN_blake2b512));
     *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_KEY, keymat, keymat_len);
     *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_SALT, network_name, strlen(network_name));
+    *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_INFO, info_common, strlen(info_common));
+    *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_INFO, info, strlen(info));
     *p = OSSL_PARAM_construct_end();
 
-    if (EVP_KDF_derive(kctx, (unsigned char*) key, sizeof(*key), params) <= 0)
+    if (EVP_KDF_derive(kctx, key, ASFT_KEY_LEN, params) <= 0)
         goto error;
 
     rv = 0;
@@ -316,6 +326,24 @@ error:
         EVP_KDF_CTX_free(kctx);
     if (kdf)
         EVP_KDF_free(kdf);
+
+    return rv;
+}
+
+int asft_kdf(
+    struct asft_key *key,
+    void *keymat,
+    size_t keymat_len,
+    void *info_common
+) {
+    int rv;
+
+    if ((rv = asft_kdf_once(key->enc, keymat, keymat_len, info_common, "Encryption")))
+        return rv;
+    if ((rv = asft_kdf_once(key->auth, keymat, keymat_len, info_common, "Authentication")))
+        return rv;
+    if ((rv = asft_kdf_once(key->auth_blob, keymat, keymat_len, info_common, "BLOB Authentication")))
+        return rv;
 
     return rv;
 }

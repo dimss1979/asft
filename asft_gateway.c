@@ -24,8 +24,10 @@ struct node
     char *label;
     char *password;
 
-    struct asft_key ikey;
-    struct asft_key skey;
+    struct asft_key ikey_req;
+    struct asft_key ikey_resp;
+    struct asft_key skey_req;
+    struct asft_key skey_resp;
     struct asft_ecdh *ecdh;
     bool have_skey;
 
@@ -115,12 +117,16 @@ static int nodes_init()
 
     n = node_first;
     while (n) {
-        if (asft_kdf(&n->ikey, n->password, strlen(n->password))) {
+        if (asft_kdf(&n->ikey_req, n->password, strlen(n->password), asft_crypto_init_key_req)) {
             asft_error("Node '%s' initial key derivation failed\n", n->label);
             goto error;
         }
-        n->blob_tx.auth_key = n->ikey.auth_blob;
-        n->blob_rx.auth_key = n->ikey.auth_blob;
+        if (asft_kdf(&n->ikey_resp, n->password, strlen(n->password), asft_crypto_init_key_resp)) {
+            asft_error("Node '%s' initial key derivation failed\n", n->label);
+            goto error;
+        }
+        n->blob_tx.auth_key = n->ikey_req.auth_blob;
+        n->blob_rx.auth_key = n->ikey_resp.auth_blob;
         if (asprintf(&n->upload_dir, "from_%s", n->label) < 0)
             goto error;
         if (asprintf(&n->download_dir, "to_%s", n->label) < 0)
@@ -136,9 +142,9 @@ error:
     return -1;
 }
 
-static void process_resp_ecdh(struct node *n, struct asft_cmd_ecdh *resp, size_t resp_len)
+static void process_resp_ecdh(struct node *n, struct asft_pkt_ecdh *resp, size_t resp_len)
 {
-    if (asft_ecdh_process(&n->ecdh, resp->public_key, &n->skey))
+    if (asft_ecdh_process(&n->ecdh, resp->public_key, &n->skey_req, &n->skey_resp))
         goto error;
 
     n->packet_number = 1;
@@ -156,7 +162,7 @@ error:
     return;
 }
 
-static void process_resp_data(struct node *n, asft_packet *resp, bool have_data)
+static void process_resp_data(struct node *n, asft_pkt *resp, bool have_data)
 {
     uint8_t ack;
     if (have_data) {
@@ -179,10 +185,10 @@ int asft_gateway_loop()
 {
     int rv;
     struct node *n = NULL;
-    asft_packet *cpkt = NULL;
+    asft_pkt *cpkt = NULL;
     uint64_t timeout;
-    asft_packet *cresp = NULL;
-    asft_packet *resp = NULL;
+    asft_pkt *cresp = NULL;
+    asft_pkt *resp = NULL;
     struct asft_base_hdr *dh;
     bool got_response;
     uint32_t rx_packet_number;
@@ -198,20 +204,21 @@ int asft_gateway_loop()
     {
         unpause_for_download();
         n = node_pick_next(n);
-        struct asft_key *ckey = &n->ikey;
+        struct asft_key *key_req = &n->ikey_req;
+        struct asft_key *key_resp = &n->ikey_resp;
 
         if (n) {
             asft_debug("Picked node '%s' retry %u\n", n->label, n->retry);
 
-            asft_packet pkt = {0};
+            asft_pkt pkt = {0};
             size_t pkt_len = 0;
 
             if (n->have_skey) {
-                ckey = &n->skey;
+                key_req = &n->skey_req;
+                key_resp = &n->skey_resp;
                 pkt.base.packet_number = htobe32(n->packet_number);
                 asft_blob_tx_init(&n->blob_tx, n->download_dir);
                 if (n->blob_tx.blob) {
-                    pkt.base.command = ASFT_REQ_DATA;
                     pkt_len = sizeof(pkt.data);
 
                     uint16_t block_idx = 0;
@@ -219,7 +226,6 @@ int asft_gateway_loop()
                     pkt.data.block_idx = htobe16(block_idx);
                     asft_blob_rx_get_ack(&n->blob_rx, &pkt.data.ack);
                 } else {
-                    pkt.base.command = ASFT_REQ_NODATA;
                     pkt_len = sizeof(pkt.nodata);
 
                     asft_blob_rx_get_ack(&n->blob_rx, &pkt.nodata.ack);
@@ -228,7 +234,6 @@ int asft_gateway_loop()
                 asft_debug("Sending ECDH public key\n");
                 getrandom(&n->packet_number, sizeof(n->packet_number), 0);
                 pkt.base.packet_number = htobe32(n->packet_number);
-                pkt.base.command = ASFT_REQ_ECDH_KEY;
                 pkt_len = sizeof(pkt.ecdh);
 
                 if (asft_ecdh_prepare(&n->ecdh, pkt.ecdh.public_key)) {
@@ -236,7 +241,7 @@ int asft_gateway_loop()
                 }
             }
 
-            rv = asft_packet_encrypt(&cpkt, &pkt, pkt_len, ckey);
+            rv = asft_pkt_encrypt(&cpkt, &pkt, pkt_len, key_req);
             if (rv || !cpkt) {
                 asft_error("Node '%s' cannot encrypt packet\n", n->label);
                 return 1;
@@ -271,7 +276,7 @@ int asft_gateway_loop()
             if (!n)
                 continue;
 
-            if (asft_packet_decrypt(&resp, cresp, rx_packet_len, ckey)) {
+            if (asft_pkt_decrypt(&resp, cresp, rx_packet_len, key_resp)) {
                 asft_debug("Decryption failed\n");
                 continue;
             }
@@ -283,19 +288,19 @@ int asft_gateway_loop()
                 continue;
             }
 
-            switch (dh->command)
+            switch (rx_packet_len)
             {
-                case ASFT_RSP_ECDH_KEY:
+                case ASFT_PKT_LEN_ECDH:
                     process_resp_ecdh(n, &resp->ecdh, rx_packet_len);
                     break;
-                case ASFT_RSP_NODATA:
+                case ASFT_PKT_LEN_NODATA:
                     process_resp_data(n, resp, false);
                     break;
-                case ASFT_RSP_DATA:
+                case ASFT_PKT_LEN_DATA:
                     process_resp_data(n, resp, true);
                     break;
                 default:
-                    asft_error("Node '%s' invalid response %u\n", n->label, dh->command);
+                    asft_error("Node '%s' invalid response %u bytes\n", n->label, rx_packet_len);
                     proceed_error(n);
             }
             got_response = true;
