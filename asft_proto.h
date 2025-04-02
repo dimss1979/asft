@@ -12,27 +12,22 @@
 #define ASFT_PKT_LEN_NODATA  (sizeof(struct asft_pkt_nodata))
 #define ASFT_PKT_LEN_DATA    (sizeof(struct asft_pkt_data))
 
-struct asft_base_hdr {
-    uint8_t tag[ASFT_TAG_LEN];
-    union {
-        uint32_t packet_number;
-        uint8_t pn[4];
-    };
-} __attribute__((packed));
-
 struct asft_pkt_ecdh {
-    struct asft_base_hdr base;
+    uint8_t tag[ASFT_TAG_LEN];
+    uint32_t timestamp;
     uint8_t public_key[ASFT_ECDH_KEY_LEN];
 } __attribute__((packed));
 
 
 struct asft_pkt_nodata {
-    struct asft_base_hdr base;
+    uint8_t tag[ASFT_TAG_LEN];
+    uint16_t packet_number;
     uint8_t ack;
 } __attribute__((packed));
 
 struct asft_pkt_data {
-    struct asft_base_hdr base;
+    uint8_t tag[ASFT_TAG_LEN];
+    uint16_t packet_number;
     uint8_t ack;
     uint16_t block_idx;
     uint8_t data[ASFT_BLOCK_LEN];
@@ -41,7 +36,6 @@ struct asft_pkt_data {
 _Static_assert(ASFT_PKT_LEN_ECDH != ASFT_PKT_LEN_DATA);
 
 typedef union {
-    struct asft_base_hdr base;
     struct asft_pkt_ecdh ecdh;
     struct asft_pkt_nodata nodata;
     struct asft_pkt_data data;

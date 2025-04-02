@@ -9,6 +9,7 @@
 #include <sys/random.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <time.h>
 
 #include "asft_proto.h"
 #include "asft_crypto.h"
@@ -31,10 +32,13 @@ struct node
     struct asft_ecdh *ecdh;
     bool have_skey;
 
-    uint32_t packet_number;
+    uint16_t packet_number;
+    uint32_t ecdh_timestamp;
+
     uint32_t retry;
     uint64_t pause_until;
     bool error;
+    bool got_response;
 
     struct asft_blob_tx blob_tx;
     struct asft_blob_rx blob_rx;
@@ -144,6 +148,16 @@ error:
 
 static void process_resp_ecdh(struct node *n, struct asft_pkt_ecdh *resp, size_t resp_len)
 {
+    uint32_t rx_timestamp = be32toh(resp->timestamp);
+
+    if (rx_timestamp == n->ecdh_timestamp) {
+        n->got_response = true;
+        n->retry = 0;
+    } else {
+        asft_error("Node '%s' invalid timestamp %u (expected %u)\n", n->label, rx_timestamp, n->ecdh_timestamp);
+        return;
+    }
+
     if (asft_ecdh_process(&n->ecdh, resp->public_key, &n->skey_req, &n->skey_resp))
         goto error;
 
@@ -164,6 +178,22 @@ error:
 
 static void process_resp_data(struct node *n, asft_pkt *resp, bool have_data)
 {
+    uint16_t rx_packet_number;
+    if (have_data) {
+        rx_packet_number = be16toh(resp->data.packet_number);
+    } else {
+        rx_packet_number = be16toh(resp->nodata.packet_number);
+    }
+
+    if (rx_packet_number == n->packet_number) {
+        n->packet_number++;
+        n->got_response = true;
+        n->retry = 0;
+    } else {
+        asft_error("Node '%s' invalid packet number %u (expected %u)\n", n->label, rx_packet_number, n->packet_number);
+        return;
+    }
+
     uint8_t ack;
     if (have_data) {
         asft_blob_rx_receive(&n->blob_rx, be16toh(resp->data.block_idx), resp->data.data, n->upload_dir);
@@ -177,8 +207,6 @@ static void process_resp_data(struct node *n, asft_pkt *resp, bool have_data)
     if (!n->blob_tx.blob && !have_data) {
         proceed_idle(n);
     }
-
-    n->packet_number++;
 }
 
 int asft_gateway_loop()
@@ -189,79 +217,83 @@ int asft_gateway_loop()
     uint64_t timeout;
     asft_pkt *cresp = NULL;
     asft_pkt *resp = NULL;
-    struct asft_base_hdr *dh;
-    bool got_response;
-    uint32_t rx_packet_number;
     size_t rx_packet_len;
 
     if (nodes_init()) {
-        asft_error("Node initialization failed\n");
+        asft_error("Initialization failed\n");
         return 1;
     }
-    asft_debug("Nodes initialized\n");
 
     while(1)
     {
         unpause_for_download();
         n = node_pick_next(n);
-        struct asft_key *key_req = &n->ikey_req;
-        struct asft_key *key_resp = &n->ikey_resp;
 
-        if (n) {
-            asft_debug("Picked node '%s' retry %u\n", n->label, n->retry);
-
-            asft_pkt pkt = {0};
-            size_t pkt_len = 0;
-
-            if (n->have_skey) {
-                key_req = &n->skey_req;
-                key_resp = &n->skey_resp;
-                pkt.base.packet_number = htobe32(n->packet_number);
-                asft_blob_tx_init(&n->blob_tx, n->download_dir);
-                if (n->blob_tx.blob) {
-                    pkt_len = sizeof(pkt.data);
-
-                    uint16_t block_idx = 0;
-                    asft_blob_tx_send(&n->blob_tx, &block_idx, pkt.data.data);
-                    pkt.data.block_idx = htobe16(block_idx);
-                    asft_blob_rx_get_ack(&n->blob_rx, &pkt.data.ack);
-                } else {
-                    pkt_len = sizeof(pkt.nodata);
-
-                    asft_blob_rx_get_ack(&n->blob_rx, &pkt.nodata.ack);
-                }
-            } else {
-                asft_debug("Sending ECDH public key\n");
-                getrandom(&n->packet_number, sizeof(n->packet_number), 0);
-                pkt.base.packet_number = htobe32(n->packet_number);
-                pkt_len = sizeof(pkt.ecdh);
-
-                if (asft_ecdh_prepare(&n->ecdh, pkt.ecdh.public_key)) {
-                    asft_error("Node '%s' cannot prepare session key exchange\n", n->label);
-                }
-            }
-
-            rv = asft_pkt_encrypt(&cpkt, &pkt, pkt_len, key_req);
-            if (rv || !cpkt) {
-                asft_error("Node '%s' cannot encrypt packet\n", n->label);
-                return 1;
-            }
-
-            asft_debug("Sending request %u bytes\n", pkt_len);
-
-            rv = asft_serial_send((unsigned char*) cpkt, pkt_len);
-            if (rv < 0) {
-                asft_error("Cannot send request\n");
-                return 1;
-            }
-
-            n->retry++;
+        if (!n) {
+            sleep(1);
+            continue;
         }
 
+        asft_debug("Picked node '%s'\n", n->label);
 
-        got_response = false;
+        struct asft_key *key_req = &n->ikey_req;
+        struct asft_key *key_resp = &n->ikey_resp;
+        asft_pkt pkt = {0};
+        size_t pkt_len = 0;
+
+        if (n->have_skey && n->packet_number == 0) {
+            asft_info("Node '%s' session key expired\n", n->label);
+            n->have_skey = false;
+        }
+
+        if (n->have_skey) {
+            key_req = &n->skey_req;
+            key_resp = &n->skey_resp;
+
+            asft_blob_tx_init(&n->blob_tx, n->download_dir);
+            if (n->blob_tx.blob) {
+                pkt_len = sizeof(pkt.data);
+                pkt.data.packet_number = htobe16(n->packet_number);
+
+                uint16_t block_idx = 0;
+                asft_blob_tx_send(&n->blob_tx, &block_idx, pkt.data.data);
+                pkt.data.block_idx = htobe16(block_idx);
+                asft_blob_rx_get_ack(&n->blob_rx, &pkt.data.ack);
+            } else {
+                pkt_len = sizeof(pkt.nodata);
+                pkt.nodata.packet_number = htobe16(n->packet_number);
+
+                asft_blob_rx_get_ack(&n->blob_rx, &pkt.nodata.ack);
+            }
+        } else {
+            asft_debug("Sending ECDH public key\n");
+            n->ecdh_timestamp = (uint32_t) time(NULL);
+            pkt.ecdh.timestamp = htobe32(n->ecdh_timestamp);
+            pkt_len = sizeof(pkt.ecdh);
+
+            if (asft_ecdh_prepare(&n->ecdh, pkt.ecdh.public_key)) {
+                asft_error("Node '%s' cannot prepare session key exchange\n", n->label);
+            }
+        }
+
+        rv = asft_pkt_encrypt(&cpkt, &pkt, pkt_len, key_req);
+        if (rv || !cpkt) {
+            asft_error("Node '%s' cannot encrypt packet\n", n->label);
+            return 1;
+        }
+
+        asft_debug("Sending request %u bytes\n", pkt_len);
+
+        rv = asft_serial_send((unsigned char*) cpkt, pkt_len);
+        if (rv < 0) {
+            asft_error("Cannot send request\n");
+            return 1;
+        }
+        n->retry++;
+
+        n->got_response = false;
         timeout = asft_now() + retry_timeout * 1000;
-        while(timeout > asft_now() && !got_response) {
+        while(timeout > asft_now() && !n->got_response) {
             rv = asft_serial_receive((unsigned char**) &cresp, &rx_packet_len);
             if (rv < 0) {
                 asft_error("Cannot receive response\n");
@@ -281,13 +313,6 @@ int asft_gateway_loop()
                 continue;
             }
 
-            dh = &resp->base;
-            rx_packet_number = be32toh(dh->packet_number);
-            if (rx_packet_number != n->packet_number) {
-                asft_error("Node '%s' packet number %u, expected %u\n", n->label, rx_packet_number, n->packet_number);
-                continue;
-            }
-
             switch (rx_packet_len)
             {
                 case ASFT_PKT_LEN_ECDH:
@@ -300,14 +325,11 @@ int asft_gateway_loop()
                     process_resp_data(n, resp, true);
                     break;
                 default:
-                    asft_error("Node '%s' invalid response %u bytes\n", n->label, rx_packet_len);
-                    proceed_error(n);
+                    asft_error("Node '%s' invalid response length %u bytes\n", n->label, rx_packet_len);
             }
-            got_response = true;
-            n->retry = 0;
         };
 
-        if (n && !got_response) {
+        if (!n->got_response) {
             asft_debug("No response\n");
             if (n->retry >= retries) {
                 asft_error("Node '%s' timeout\n", n->label);

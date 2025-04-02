@@ -199,9 +199,8 @@ int asft_pkt_encrypt(
     struct asft_key *key
 ) {
     int tmplen;
-    struct asft_base_hdr *h = (struct asft_base_hdr*) pkt;
-    unsigned char *from = (unsigned char *) &h->packet_number;
-    unsigned char *to = (unsigned char *) &g_pkt->base.packet_number;
+    unsigned char *from = pkt + ASFT_TAG_LEN;
+    unsigned char *to = ((unsigned char *) g_pkt) + ASFT_TAG_LEN;
     size_t enc_len = pkt_len - ASFT_TAG_LEN;
     unsigned char nonce[CHACHA20_MAX_IVLEN] = {0};
 
@@ -211,7 +210,7 @@ int asft_pkt_encrypt(
     if (pkt_len > sizeof(asft_pkt))
         goto error;
 
-    if (pkt_len < sizeof(struct asft_base_hdr))
+    if (pkt_len < ASFT_TAG_LEN + 1)
         goto error;
 
     unsigned char *hmac = HMAC(EVP_blake2b512(), key->auth, sizeof(key->auth), from, enc_len, NULL, NULL);
@@ -219,8 +218,8 @@ int asft_pkt_encrypt(
     if (!hmac)
         goto error;
 
-    memcpy(g_pkt->base.tag, hmac, sizeof(g_pkt->base.tag));
-    memcpy(nonce, g_pkt->base.tag, sizeof(g_pkt->base.tag));
+    memcpy(g_pkt, hmac, ASFT_TAG_LEN);
+    memcpy(nonce, hmac, ASFT_TAG_LEN);
 
     if (!EVP_EncryptInit_ex(g_ctx, EVP_chacha20(), NULL, key->enc, nonce))
         goto error;
@@ -246,9 +245,8 @@ int asft_pkt_decrypt(
     struct asft_key *key
 ) {
     int tmplen;
-    struct asft_base_hdr *h = &cpkt->base;
-    unsigned char *from = (unsigned char *) &h->packet_number;
-    unsigned char *to = (unsigned char *) &g_pkt->base.packet_number;
+    unsigned char *from = ((unsigned char *) cpkt) + ASFT_TAG_LEN;
+    unsigned char *to = ((unsigned char *) g_pkt) + ASFT_TAG_LEN;
     size_t dec_len = cpkt_len - ASFT_TAG_LEN;
     unsigned char nonce[CHACHA20_MAX_IVLEN] = {0};
 
@@ -258,10 +256,10 @@ int asft_pkt_decrypt(
     if (cpkt_len > sizeof(*cpkt))
         goto error;
 
-    if (cpkt_len < sizeof(struct asft_base_hdr))
+    if (cpkt_len < ASFT_TAG_LEN + 1)
         goto error;
 
-    memcpy(nonce, &h->tag, sizeof(h->tag));
+    memcpy(nonce, cpkt, ASFT_TAG_LEN);
 
     if (!EVP_DecryptInit_ex(g_ctx, EVP_chacha20(), NULL, key->enc, nonce))
         goto error;
@@ -274,7 +272,7 @@ int asft_pkt_decrypt(
 
     unsigned char *hmac = HMAC(EVP_blake2b512(), key->auth, sizeof(key->auth), to, dec_len, NULL, NULL);
 
-    if (!hmac || CRYPTO_memcmp(hmac, h->tag, sizeof(h->tag)))
+    if (!hmac || CRYPTO_memcmp(hmac, cpkt, ASFT_TAG_LEN))
         goto error;
 
     *pkt_ptr = g_pkt;

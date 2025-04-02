@@ -29,7 +29,8 @@ static struct gateway
     struct asft_ecdh *ecdh;
     bool have_skey;
 
-    uint32_t last_packet_number;
+    uint16_t last_packet_number;
+    uint32_t last_ecdh_timestamp;
 
     struct asft_blob_tx blob_tx;
     struct asft_blob_rx blob_rx;
@@ -67,15 +68,25 @@ error:
 
 static void process_req_ecdh(asft_pkt *req, asft_pkt *resp, size_t *resp_len)
 {
+    uint32_t rx_timestamp = be32toh(req->ecdh.timestamp);
+    if (rx_timestamp <= gw.last_ecdh_timestamp) {
+        asft_error("Repeated timestamp %u, last was %u\n", rx_timestamp, gw.last_ecdh_timestamp);
+        return;
+    } else {
+        gw.last_ecdh_timestamp = rx_timestamp;
+    }
+
     if (asft_ecdh_prepare(&gw.ecdh, resp->ecdh.public_key))
         goto error;
 
     if (asft_ecdh_process(&gw.ecdh, req->ecdh.public_key, &gw.skey_req, &gw.skey_resp))
         goto error;
 
-    *resp_len = sizeof(resp->ecdh);
     gw.have_skey = true;
     gw.last_packet_number = 0;
+
+    *resp_len = sizeof(resp->ecdh);
+    resp->ecdh.timestamp = htobe32(rx_timestamp);
 
     asft_info("Session key exchange complete\n");
 
@@ -90,6 +101,20 @@ error:
 
 static void process_req_data(asft_pkt *req, asft_pkt *resp, size_t *resp_len, bool have_data)
 {
+    uint16_t rx_packet_number;
+    if (have_data) {
+        rx_packet_number = be16toh(req->data.packet_number);
+    } else {
+        rx_packet_number = be16toh(req->nodata.packet_number);
+    }
+
+    if (rx_packet_number <= gw.last_packet_number) {
+        asft_error("Repeated packet number %u, last was %u\n", rx_packet_number, gw.last_packet_number);
+        return;
+    } else {
+        gw.last_packet_number = rx_packet_number;
+    }
+
     uint8_t ack;
     if (have_data) {
         asft_blob_rx_receive(&gw.blob_rx, be16toh(req->data.block_idx), req->data.data, gw.download_dir);
@@ -107,19 +132,21 @@ static void process_req_data(asft_pkt *req, asft_pkt *resp, size_t *resp_len, bo
         asft_blob_tx_send(&gw.blob_tx, &block_idx, resp->data.data);
         resp->data.block_idx = htobe16(block_idx);
         asft_blob_rx_get_ack(&gw.blob_rx, &resp->data.ack);
+        resp->data.packet_number = htobe16(rx_packet_number);
     } else {
         *resp_len = sizeof(resp->nodata);
+
         asft_blob_rx_get_ack(&gw.blob_rx, &resp->nodata.ack);
+        resp->nodata.packet_number = htobe16(rx_packet_number);
     }
 }
 
 int asft_node_loop()
 {
     if (gateway_init()) {
-        asft_error("Gateway initialization failed\n");
+        asft_error("Initialization failed\n");
         return 1;
     }
-    asft_debug("Gateway initialized\n");
 
     while (1) {
         int rv = 0;
@@ -128,7 +155,6 @@ int asft_node_loop()
         size_t pkt_len = 0;
         asft_pkt resp, *cresp = NULL;
         size_t resp_len = 0;
-        uint32_t rx_packet_number;
 
         rv = asft_serial_receive((unsigned char**) &cpkt, &pkt_len);
         if (rv < 0) {
@@ -142,32 +168,14 @@ int asft_node_loop()
         asft_debug("Received %u bytes\n", pkt_len);
 
         if (gw.have_skey && pkt_len != ASFT_PKT_LEN_ECDH) {
-            rv = asft_pkt_decrypt(&pkt, cpkt, pkt_len, &gw.skey_req);
-            if (!rv && pkt) {
-                goto decrypted;
-            }
+            asft_pkt_decrypt(&pkt, cpkt, pkt_len, &gw.skey_req);
         }
-        if (pkt_len == ASFT_PKT_LEN_ECDH) {
-            rv = asft_pkt_decrypt(&pkt, cpkt, pkt_len, &gw.ikey_req);
-            if (!rv && pkt) {
-                goto decrypted;
-            }
+        if (!pkt && pkt_len == ASFT_PKT_LEN_ECDH) {
+            asft_pkt_decrypt(&pkt, cpkt, pkt_len, &gw.ikey_req);
         }
-
-        asft_debug("Decryption failed\n");
-        continue;
-
-decrypted:
-
-        rx_packet_number = be32toh(pkt->base.packet_number);
-        if (pkt_len != ASFT_PKT_LEN_ECDH) {
-            if (rx_packet_number <= gw.last_packet_number) {
-                asft_error("Repeated packet number %u, last was %u\n", rx_packet_number, gw.last_packet_number);
-                continue;
-            }
-            gw.last_packet_number = rx_packet_number;
-        } else {
-            // TODO ECDH replay protection
+        if (!pkt) {
+            asft_debug("Decryption failed\n");
+            continue;
         }
 
         struct asft_key *key_resp = &gw.skey_resp;
@@ -188,8 +196,6 @@ decrypted:
         }
 
         if (resp_len) {
-            resp.base.packet_number = htobe32(rx_packet_number);
-
             if (asft_pkt_encrypt(&cresp, &resp, resp_len, key_resp)) {
                 asft_error("Response encryption failed\n");
                 return 1;
@@ -202,7 +208,6 @@ decrypted:
                 return 1;
             }
         }
-
     }
 }
 
