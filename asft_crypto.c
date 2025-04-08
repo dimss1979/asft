@@ -16,6 +16,8 @@
 
 #define CHACHA20_MAX_IVLEN 16
 
+_Static_assert(ASFT_TAG_LEN + 4 <= CHACHA20_MAX_IVLEN, "MAC tag must not overlap chacha20 32-bit counter");
+
 char *asft_crypto_init_key_req  = "Initial key for request";
 char *asft_crypto_init_key_resp = "Initial key for response";
 
@@ -219,7 +221,7 @@ int asft_pkt_encrypt(
         goto error;
 
     memcpy(g_pkt, hmac, ASFT_TAG_LEN);
-    memcpy(nonce, hmac, ASFT_TAG_LEN);
+    memcpy(nonce + 4, hmac, ASFT_TAG_LEN);
 
     if (!EVP_EncryptInit_ex(g_ctx, EVP_chacha20(), NULL, key->enc, nonce))
         goto error;
@@ -259,7 +261,7 @@ int asft_pkt_decrypt(
     if (cpkt_len < ASFT_TAG_LEN + 1)
         goto error;
 
-    memcpy(nonce, cpkt, ASFT_TAG_LEN);
+    memcpy(nonce + 4, cpkt, ASFT_TAG_LEN);
 
     if (!EVP_DecryptInit_ex(g_ctx, EVP_chacha20(), NULL, key->enc, nonce))
         goto error;
