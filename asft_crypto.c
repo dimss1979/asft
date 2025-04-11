@@ -25,16 +25,7 @@ struct asft_ecdh {
     EVP_PKEY *pkey;
 };
 
-static EVP_CIPHER_CTX *g_ctx = NULL;
 static char *network_name = NULL;
-
-static void asft_crypto_cleanup()
-{
-    if (g_ctx) {
-        EVP_CIPHER_CTX_free(g_ctx);
-        g_ctx = NULL;
-    }
-}
 
 static void ecdh_cleanup(struct asft_ecdh *ecdh)
 {
@@ -48,14 +39,6 @@ static void ecdh_cleanup(struct asft_ecdh *ecdh)
 
 size_t asft_crypto_init()
 {
-    asft_crypto_cleanup();
-
-    g_ctx = EVP_CIPHER_CTX_new();
-    if (!g_ctx) {
-        asft_error("Cannot allocate OpenSSL cipher context\n");
-        goto error;
-    }
-
     if (!network_name) {
         asft_error("Network name not specified\n");
         goto error;
@@ -64,8 +47,6 @@ size_t asft_crypto_init()
     return 0;
 
 error:
-
-    asft_crypto_cleanup();
 
     return -1;
 }
@@ -195,8 +176,7 @@ int asft_pkt_encrypt(
     size_t enc_len = pkt_len - ASFT_TAG_LEN;
     unsigned char nonce[CHACHA20_MAX_IVLEN] = {0};
 
-    if (!g_ctx)
-        goto error;
+    EVP_CIPHER_CTX *ctx = NULL;
 
     if (pkt_len > sizeof(asft_pkt))
         goto error;
@@ -212,18 +192,27 @@ int asft_pkt_encrypt(
     memcpy(cpkt, hmac, ASFT_TAG_LEN);
     memcpy(nonce + 4, hmac, ASFT_TAG_LEN);
 
-    if (EVP_EncryptInit_ex(g_ctx, EVP_chacha20(), NULL, key->enc, nonce) != 1)
+    ctx = EVP_CIPHER_CTX_new();
+    if (!ctx) {
+        asft_error("Encryption cipher ctx failed\n");
+        goto error;
+    }
+
+    if (EVP_EncryptInit_ex(ctx, EVP_chacha20(), NULL, key->enc, nonce) != 1)
         goto error;
 
-    if (EVP_EncryptUpdate(g_ctx, to, &tmplen, from, enc_len) != 1)
+    if (EVP_EncryptUpdate(ctx, to, &tmplen, from, enc_len) != 1)
         goto error;
 
-    if (EVP_EncryptFinal_ex(g_ctx, to + tmplen, &tmplen) != 1)
+    if (EVP_EncryptFinal_ex(ctx, to + tmplen, &tmplen) != 1)
         goto error;
 
     rv = 0;
 
 error:
+
+    if (ctx)
+        EVP_CIPHER_CTX_free(ctx);
 
     return rv;
 }
@@ -241,18 +230,26 @@ int asft_pkt_decrypt(
     size_t dec_len = cpkt_len - ASFT_TAG_LEN;
     unsigned char nonce[CHACHA20_MAX_IVLEN] = {0};
 
+    EVP_CIPHER_CTX *ctx = NULL;
+
     if (cpkt_len < ASFT_TAG_LEN + 1)
         goto error;
 
     memcpy(nonce + 4, cpkt, ASFT_TAG_LEN);
 
-    if (EVP_DecryptInit_ex(g_ctx, EVP_chacha20(), NULL, key->enc, nonce) != 1)
+    ctx = EVP_CIPHER_CTX_new();
+    if (!ctx) {
+        asft_error("Decryption cipher ctx failed\n");
+        goto error;
+    }
+
+    if (EVP_DecryptInit_ex(ctx, EVP_chacha20(), NULL, key->enc, nonce) != 1)
         goto error;
 
-    if (EVP_DecryptUpdate(g_ctx, to, &tmplen, from, dec_len) != 1)
+    if (EVP_DecryptUpdate(ctx, to, &tmplen, from, dec_len) != 1)
         goto error;
 
-    if (EVP_DecryptFinal_ex(g_ctx, to + tmplen, &tmplen) != 1)
+    if (EVP_DecryptFinal_ex(ctx, to + tmplen, &tmplen) != 1)
         goto error;
 
     unsigned char *hmac = HMAC(EVP_blake2b512(), key->auth, sizeof(key->auth), to, dec_len, NULL, NULL);
@@ -263,6 +260,9 @@ int asft_pkt_decrypt(
     rv = 0;
 
 error:
+
+    if (ctx)
+        EVP_CIPHER_CTX_free(ctx);
 
     return rv;
 }
