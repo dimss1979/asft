@@ -150,11 +150,9 @@ int asft_node_loop()
 
     while (1) {
         int rv = 0;
-        asft_pkt *pkt = NULL;
+        asft_pkt pkt = {0}, resp = {0}, cresp = {0};
         asft_pkt *cpkt = NULL;
-        size_t pkt_len = 0;
-        asft_pkt resp, *cresp = NULL;
-        size_t resp_len = 0;
+        size_t pkt_len = 0, resp_len = 0;
 
         rv = asft_serial_receive((unsigned char**) &cpkt, &pkt_len);
         if (rv < 0) {
@@ -167,13 +165,13 @@ int asft_node_loop()
 
         asft_debug("Received %u bytes\n", pkt_len);
 
+        rv = 1;
         if (gw.have_skey && pkt_len != ASFT_PKT_LEN_ECDH) {
-            asft_pkt_decrypt(&pkt, cpkt, pkt_len, &gw.skey_req);
+            rv = asft_pkt_decrypt(&pkt, cpkt, pkt_len, &gw.skey_req);
+        } else if (pkt_len == ASFT_PKT_LEN_ECDH) {
+            rv = asft_pkt_decrypt(&pkt, cpkt, pkt_len, &gw.ikey_req);
         }
-        if (!pkt && pkt_len == ASFT_PKT_LEN_ECDH) {
-            asft_pkt_decrypt(&pkt, cpkt, pkt_len, &gw.ikey_req);
-        }
-        if (!pkt) {
+        if (rv) {
             asft_debug("Decryption failed\n");
             continue;
         }
@@ -182,14 +180,14 @@ int asft_node_loop()
         switch (pkt_len)
         {
             case ASFT_PKT_LEN_ECDH:
-                process_req_ecdh(pkt, &resp, &resp_len);
+                process_req_ecdh(&pkt, &resp, &resp_len);
                 key_resp = &gw.ikey_resp;
                 break;
             case ASFT_PKT_LEN_NODATA:
-                process_req_data(pkt, &resp, &resp_len, false);
+                process_req_data(&pkt, &resp, &resp_len, false);
                 break;
             case ASFT_PKT_LEN_DATA:
-                process_req_data(pkt, &resp, &resp_len, true);
+                process_req_data(&pkt, &resp, &resp_len, true);
                 break;
             default:
                 asft_error("Unknown request length %u bytes\n", pkt_len);
@@ -203,7 +201,7 @@ int asft_node_loop()
 
             asft_debug("Sending response %u bytes\n", resp_len);
 
-            if (asft_serial_send((unsigned char*) cresp, resp_len) < 0) {
+            if (asft_serial_send((unsigned char*) &cresp, resp_len) < 0) {
                 asft_error("Cannot send response\n");
                 return 1;
             }

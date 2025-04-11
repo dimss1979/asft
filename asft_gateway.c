@@ -213,11 +213,7 @@ int asft_gateway_loop()
 {
     int rv;
     struct node *n = NULL;
-    asft_pkt *cpkt = NULL;
     uint64_t timeout;
-    asft_pkt *cresp = NULL;
-    asft_pkt *resp = NULL;
-    size_t rx_packet_len;
 
     if (nodes_init()) {
         asft_error("Initialization failed\n");
@@ -238,8 +234,10 @@ int asft_gateway_loop()
 
         struct asft_key *key_req = &n->ikey_req;
         struct asft_key *key_resp = &n->ikey_resp;
-        asft_pkt pkt = {0};
-        size_t pkt_len = 0;
+        asft_pkt pkt = {0}, cpkt = {0}, resp = {0};
+        asft_pkt *cresp = NULL;
+        size_t pkt_len = 0, rx_packet_len = 0;
+
 
         if (n->have_skey && n->packet_number == 0) {
             asft_info("Node '%s' session key expired\n", n->label);
@@ -277,14 +275,14 @@ int asft_gateway_loop()
         }
 
         rv = asft_pkt_encrypt(&cpkt, &pkt, pkt_len, key_req);
-        if (rv || !cpkt) {
+        if (rv) {
             asft_error("Node '%s' cannot encrypt packet\n", n->label);
             return 1;
         }
 
         asft_debug("Sending request %u bytes\n", pkt_len);
 
-        rv = asft_serial_send((unsigned char*) cpkt, pkt_len);
+        rv = asft_serial_send((unsigned char*) &cpkt, pkt_len);
         if (rv < 0) {
             asft_error("Cannot send request\n");
             return 1;
@@ -316,13 +314,13 @@ int asft_gateway_loop()
             switch (rx_packet_len)
             {
                 case ASFT_PKT_LEN_ECDH:
-                    process_resp_ecdh(n, &resp->ecdh, rx_packet_len);
+                    process_resp_ecdh(n, &resp.ecdh, rx_packet_len);
                     break;
                 case ASFT_PKT_LEN_NODATA:
-                    process_resp_data(n, resp, false);
+                    process_resp_data(n, &resp, false);
                     break;
                 case ASFT_PKT_LEN_DATA:
-                    process_resp_data(n, resp, true);
+                    process_resp_data(n, &resp, true);
                     break;
                 default:
                     asft_error("Node '%s' invalid response length %u bytes\n", n->label, rx_packet_len);

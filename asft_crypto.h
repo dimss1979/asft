@@ -30,15 +30,15 @@ int asft_ecdh_process(
 );
 
 int asft_pkt_encrypt(
-    asft_pkt **cpkt_ptr,
+    void *cpkt,
     void *pkt,
     size_t pkt_len,
     struct asft_key *key
 );
 
 int asft_pkt_decrypt(
-    asft_pkt **pkt_ptr,
-    asft_pkt *cpkt,
+    void *pkt,
+    void *cpkt,
     size_t cpkt_len,
     struct asft_key *key
 );

@@ -25,7 +25,6 @@ struct asft_ecdh {
     EVP_PKEY *pkey;
 };
 
-static asft_pkt *g_pkt = NULL;
 static EVP_CIPHER_CTX *g_ctx = NULL;
 static char *network_name = NULL;
 
@@ -34,11 +33,6 @@ static void asft_crypto_cleanup()
     if (g_ctx) {
         EVP_CIPHER_CTX_free(g_ctx);
         g_ctx = NULL;
-    }
-
-    if (g_pkt) {
-        free(g_pkt);
-        g_pkt = NULL;
     }
 }
 
@@ -55,12 +49,6 @@ static void ecdh_cleanup(struct asft_ecdh *ecdh)
 size_t asft_crypto_init()
 {
     asft_crypto_cleanup();
-
-    g_pkt = malloc(sizeof(*g_pkt));
-    if (!g_pkt) {
-        asft_error("Cannot allocate temporary packet buffer\n");
-        goto error;
-    }
 
     g_ctx = EVP_CIPHER_CTX_new();
     if (!g_ctx) {
@@ -195,14 +183,15 @@ error:
 }
 
 int asft_pkt_encrypt(
-    asft_pkt **cpkt_ptr,
+    void *cpkt,
     void *pkt,
     size_t pkt_len,
     struct asft_key *key
 ) {
+    int rv = -1;
     int tmplen;
     unsigned char *from = pkt + ASFT_TAG_LEN;
-    unsigned char *to = ((unsigned char *) g_pkt) + ASFT_TAG_LEN;
+    unsigned char *to = cpkt + ASFT_TAG_LEN;
     size_t enc_len = pkt_len - ASFT_TAG_LEN;
     unsigned char nonce[CHACHA20_MAX_IVLEN] = {0};
 
@@ -220,56 +209,50 @@ int asft_pkt_encrypt(
     if (!hmac)
         goto error;
 
-    memcpy(g_pkt, hmac, ASFT_TAG_LEN);
+    memcpy(cpkt, hmac, ASFT_TAG_LEN);
     memcpy(nonce + 4, hmac, ASFT_TAG_LEN);
 
-    if (!EVP_EncryptInit_ex(g_ctx, EVP_chacha20(), NULL, key->enc, nonce))
+    if (EVP_EncryptInit_ex(g_ctx, EVP_chacha20(), NULL, key->enc, nonce) != 1)
         goto error;
 
-    if (!EVP_EncryptUpdate(g_ctx, to, &tmplen, from, enc_len))
+    if (EVP_EncryptUpdate(g_ctx, to, &tmplen, from, enc_len) != 1)
         goto error;
 
-    if (!EVP_EncryptFinal_ex(g_ctx, to + tmplen, &tmplen))
+    if (EVP_EncryptFinal_ex(g_ctx, to + tmplen, &tmplen) != 1)
         goto error;
 
-    *cpkt_ptr = g_pkt;
-    return 0;
+    rv = 0;
 
 error:
 
-    return -1;
+    return rv;
 }
 
 int asft_pkt_decrypt(
-    asft_pkt **pkt_ptr,
-    asft_pkt *cpkt,
+    void *pkt,
+    void *cpkt,
     size_t cpkt_len,
     struct asft_key *key
 ) {
+    int rv = -1;
     int tmplen;
-    unsigned char *from = ((unsigned char *) cpkt) + ASFT_TAG_LEN;
-    unsigned char *to = ((unsigned char *) g_pkt) + ASFT_TAG_LEN;
+    unsigned char *from = cpkt + ASFT_TAG_LEN;
+    unsigned char *to = pkt + ASFT_TAG_LEN;
     size_t dec_len = cpkt_len - ASFT_TAG_LEN;
     unsigned char nonce[CHACHA20_MAX_IVLEN] = {0};
-
-    if (!g_ctx)
-        goto error;
-
-    if (cpkt_len > sizeof(*cpkt))
-        goto error;
 
     if (cpkt_len < ASFT_TAG_LEN + 1)
         goto error;
 
     memcpy(nonce + 4, cpkt, ASFT_TAG_LEN);
 
-    if (!EVP_DecryptInit_ex(g_ctx, EVP_chacha20(), NULL, key->enc, nonce))
+    if (EVP_DecryptInit_ex(g_ctx, EVP_chacha20(), NULL, key->enc, nonce) != 1)
         goto error;
 
-    if (!EVP_DecryptUpdate(g_ctx, to, &tmplen, from, dec_len))
+    if (EVP_DecryptUpdate(g_ctx, to, &tmplen, from, dec_len) != 1)
         goto error;
 
-    if (!EVP_DecryptFinal_ex(g_ctx, to + tmplen, &tmplen))
+    if (EVP_DecryptFinal_ex(g_ctx, to + tmplen, &tmplen) != 1)
         goto error;
 
     unsigned char *hmac = HMAC(EVP_blake2b512(), key->auth, sizeof(key->auth), to, dec_len, NULL, NULL);
@@ -277,12 +260,11 @@ int asft_pkt_decrypt(
     if (!hmac || CRYPTO_memcmp(hmac, cpkt, ASFT_TAG_LEN))
         goto error;
 
-    *pkt_ptr = g_pkt;
-    return 0;
+    rv = 0;
 
 error:
 
-    return -1;
+    return rv;
 }
 
 int asft_kdf_once(
@@ -315,7 +297,7 @@ int asft_kdf_once(
     *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_INFO, info, strlen(info));
     *p = OSSL_PARAM_construct_end();
 
-    if (EVP_KDF_derive(kctx, key, ASFT_KEY_LEN, params) <= 0)
+    if (EVP_KDF_derive(kctx, key, ASFT_KEY_LEN, params) != 1)
         goto error;
 
     rv = 0;
