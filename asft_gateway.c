@@ -236,7 +236,7 @@ int asft_gateway_loop()
         struct asft_key *key_resp = &n->ikey_resp;
         asft_pkt pkt = {0}, cpkt = {0}, resp = {0};
         asft_pkt *cresp = NULL;
-        size_t pkt_len = 0, rx_packet_len = 0;
+        size_t pkt_len = 0, rx_packet_len = 0, nonce_len = 0;
 
 
         if (n->have_skey && n->packet_number == 0) {
@@ -252,6 +252,7 @@ int asft_gateway_loop()
             if (n->blob_tx.blob) {
                 pkt_len = sizeof(pkt.data);
                 pkt.data.packet_number = htobe16(n->packet_number);
+                nonce_len = sizeof(pkt.data.packet_number);
 
                 uint16_t block_idx = 0;
                 asft_blob_tx_send(&n->blob_tx, &block_idx, pkt.data.data);
@@ -260,6 +261,7 @@ int asft_gateway_loop()
             } else {
                 pkt_len = sizeof(pkt.nodata);
                 pkt.nodata.packet_number = htobe16(n->packet_number);
+                nonce_len = sizeof(pkt.nodata.packet_number);
 
                 asft_blob_rx_get_ack(&n->blob_rx, &pkt.nodata.ack);
             }
@@ -268,13 +270,14 @@ int asft_gateway_loop()
             n->ecdh_timestamp = (uint32_t) time(NULL);
             pkt.ecdh.timestamp = htobe32(n->ecdh_timestamp);
             pkt_len = sizeof(pkt.ecdh);
+            nonce_len = sizeof(pkt.ecdh.timestamp);
 
             if (asft_ecdh_prepare(&n->ecdh, pkt.ecdh.public_key)) {
                 asft_error("Node '%s' cannot prepare session key exchange\n", n->label);
             }
         }
 
-        rv = asft_pkt_encrypt(&cpkt, &pkt, pkt_len, key_req);
+        rv = asft_chaSIV_encrypt(&cpkt, &pkt, pkt_len, key_req, nonce_len);
         if (rv) {
             asft_error("Node '%s' cannot encrypt packet\n", n->label);
             return 1;
@@ -306,7 +309,7 @@ int asft_gateway_loop()
             if (!n)
                 continue;
 
-            if (asft_pkt_decrypt(&resp, cresp, rx_packet_len, key_resp)) {
+            if (asft_chaSIV_decrypt(&resp, cresp, rx_packet_len, key_resp, nonce_len)) {
                 asft_debug("Decryption failed\n");
                 continue;
             }

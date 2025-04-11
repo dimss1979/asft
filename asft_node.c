@@ -167,34 +167,38 @@ int asft_node_loop()
 
         rv = 1;
         if (gw.have_skey && pkt_len != ASFT_PKT_LEN_ECDH) {
-            rv = asft_pkt_decrypt(&pkt, cpkt, pkt_len, &gw.skey_req);
+            rv = asft_chaSIV_decrypt(&pkt, cpkt, pkt_len, &gw.skey_req, sizeof(pkt.data.packet_number));
         } else if (pkt_len == ASFT_PKT_LEN_ECDH) {
-            rv = asft_pkt_decrypt(&pkt, cpkt, pkt_len, &gw.ikey_req);
+            rv = asft_chaSIV_decrypt(&pkt, cpkt, pkt_len, &gw.ikey_req, sizeof(pkt.ecdh.timestamp));
         }
         if (rv) {
             asft_debug("Decryption failed\n");
             continue;
         }
 
+        size_t resp_nonce_len = 0;
         struct asft_key *key_resp = &gw.skey_resp;
         switch (pkt_len)
         {
             case ASFT_PKT_LEN_ECDH:
                 process_req_ecdh(&pkt, &resp, &resp_len);
                 key_resp = &gw.ikey_resp;
+                resp_nonce_len = sizeof(pkt.ecdh.timestamp);
                 break;
             case ASFT_PKT_LEN_NODATA:
                 process_req_data(&pkt, &resp, &resp_len, false);
+                resp_nonce_len = sizeof(pkt.data.packet_number);
                 break;
             case ASFT_PKT_LEN_DATA:
                 process_req_data(&pkt, &resp, &resp_len, true);
+                resp_nonce_len = sizeof(pkt.data.packet_number);
                 break;
             default:
                 asft_error("Unknown request length %u bytes\n", pkt_len);
         }
 
         if (resp_len) {
-            if (asft_pkt_encrypt(&cresp, &resp, resp_len, key_resp)) {
+            if (asft_chaSIV_encrypt(&cresp, &resp, resp_len, key_resp, resp_nonce_len)) {
                 asft_error("Response encryption failed\n");
                 return 1;
             }

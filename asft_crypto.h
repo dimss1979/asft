@@ -10,7 +10,7 @@ struct asft_ecdh;
 
 struct asft_key {
     unsigned char enc[ASFT_KEY_LEN];
-    unsigned char auth[ASFT_KEY_LEN];
+    unsigned char enc_of_nonce[ASFT_KEY_LEN];
     unsigned char auth_blob[ASFT_KEY_LEN];
 };
 
@@ -29,18 +29,20 @@ int asft_ecdh_process(
     struct asft_key *skey_resp
 );
 
-int asft_pkt_encrypt(
+int asft_chaSIV_encrypt(
     void *cpkt,
     void *pkt,
     size_t pkt_len,
-    struct asft_key *key
+    struct asft_key *key,
+    size_t N_len
 );
 
-int asft_pkt_decrypt(
+int asft_chaSIV_decrypt(
     void *pkt,
     void *cpkt,
     size_t cpkt_len,
-    struct asft_key *key
+    struct asft_key *key,
+    size_t N_len
 );
 
 int asft_kdf_once(

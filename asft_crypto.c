@@ -163,34 +163,157 @@ error:
     return rv;
 }
 
-int asft_pkt_encrypt(
+static int chaSIV_H(
+    unsigned char *T,
+    unsigned char *K,
+    unsigned char *N,
+    size_t N_len,
+    unsigned char *M,
+    size_t M_len
+)
+{
+    int rv = -1;
+
+    EVP_MD *md = NULL;
+    EVP_MD_CTX *mdctx = NULL;
+
+    md = EVP_MD_fetch(NULL, "BLAKE2S-256", NULL);
+    if (!md) {
+        asft_error("Digest is not supported\n");
+        goto error;
+    }
+
+    mdctx = EVP_MD_CTX_new();
+    if (!mdctx) {
+        asft_error("Cannot create digest context\n");
+        goto error;
+    }
+
+    if (EVP_DigestInit_ex2(mdctx, md, NULL) != 1) {
+        asft_error("Cannot initialize digest\n");
+        goto error;
+    }
+
+    if (EVP_DigestUpdate(mdctx, K, ASFT_KEY_LEN) != 1) {
+        asft_error("Cannot update digest\n");
+        goto error;
+    }
+    if (EVP_DigestUpdate(mdctx, N, N_len) != 1) {
+        asft_error("Cannot update digest\n");
+        goto error;
+    }
+    if (EVP_DigestUpdate(mdctx, M, M_len) != 1) {
+        asft_error("Cannot update digest\n");
+        goto error;
+    }
+
+    unsigned char md_buf[64];
+    unsigned int md_len;
+    if (EVP_DigestFinal_ex(mdctx, md_buf, &md_len) != 1) {
+        asft_error("Cannot finalize digest\n");
+        goto error;
+    }
+
+    memcpy(T, md_buf, ASFT_TAG_LEN);
+    rv = 0;
+
+error:
+
+    if (mdctx)
+        EVP_MD_CTX_free(mdctx);
+    if (md)
+        EVP_MD_free(md);
+
+    return rv;
+}
+
+static int chaSIV_F(
+    unsigned char *Ke,
+    unsigned char *K,
+    unsigned char *N,
+    size_t N_len
+)
+{
+    int rv = -1;
+
+    EVP_MAC *mac = NULL;
+    EVP_MAC_CTX *ctx = NULL;
+
+    mac = EVP_MAC_fetch(NULL, "BLAKE2SMAC", "provider=default");
+    if (!mac) {
+        asft_error("MAC is not supported\n");
+        goto error;
+    }
+
+    ctx = EVP_MAC_CTX_new(mac);
+    if (!ctx) {
+        asft_error("Cannot create MAC context\n");
+        goto error;
+    }
+
+    if (EVP_MAC_init(ctx, K, ASFT_KEY_LEN, NULL) != 1) {
+        asft_error("Cannot initialize MAC\n");
+        goto error;
+    }
+
+    if (EVP_MAC_update(ctx, N, N_len) != 1) {
+        asft_error("Cannot update MAC of nonce\n");
+        goto error;
+    }
+
+    size_t output_len = 0;
+    if (EVP_MAC_final(ctx, Ke, &output_len, ASFT_KEY_LEN) != 1) {
+        asft_error("Cannot finalize MAC of nonce\n");
+        goto error;
+    }
+
+    rv = 0;
+
+error:
+
+    if (ctx)
+        EVP_MAC_CTX_free(ctx);
+    if (mac)
+        EVP_MAC_free(mac);
+
+    return rv;
+}
+
+int asft_chaSIV_encrypt(
     void *cpkt,
     void *pkt,
     size_t pkt_len,
-    struct asft_key *key
+    struct asft_key *key,
+    size_t N_len
 ) {
     int rv = -1;
     int tmplen;
-    unsigned char *from = pkt + ASFT_TAG_LEN;
-    unsigned char *to = cpkt + ASFT_TAG_LEN;
-    size_t enc_len = pkt_len - ASFT_TAG_LEN;
-    unsigned char nonce[CHACHA20_MAX_IVLEN] = {0};
+    unsigned char *M = pkt + ASFT_TAG_LEN + N_len;
+    unsigned char *C = cpkt + ASFT_TAG_LEN + N_len;
+    size_t M_len = pkt_len - ASFT_TAG_LEN - N_len;
+    unsigned char *T = cpkt;
+    unsigned char *K = key->enc;
+    unsigned char *N = pkt + ASFT_TAG_LEN;
+    unsigned char *Nc = cpkt + ASFT_TAG_LEN;
 
     EVP_CIPHER_CTX *ctx = NULL;
 
-    if (pkt_len > sizeof(asft_pkt))
+    if (M_len < 1)
         goto error;
 
-    if (pkt_len < ASFT_TAG_LEN + 1)
+    if (chaSIV_H(T, K, N, N_len, M, M_len)) {
+        asft_error("Encryption H() failed\n");
         goto error;
+    }
 
-    unsigned char *hmac = HMAC(EVP_blake2b512(), key->auth, sizeof(key->auth), from, enc_len, NULL, NULL);
+    unsigned char E_nonce[CHACHA20_MAX_IVLEN] = {0};
+    memcpy(E_nonce + 4, T, ASFT_TAG_LEN);
 
-    if (!hmac)
+    unsigned char Ke[ASFT_KEY_LEN] = {0};
+    if (chaSIV_F(Ke, K, N, N_len)) {
+        asft_error("Encryption F() failed\n");
         goto error;
-
-    memcpy(cpkt, hmac, ASFT_TAG_LEN);
-    memcpy(nonce + 4, hmac, ASFT_TAG_LEN);
+    }
 
     ctx = EVP_CIPHER_CTX_new();
     if (!ctx) {
@@ -198,14 +321,29 @@ int asft_pkt_encrypt(
         goto error;
     }
 
-    if (EVP_EncryptInit_ex(ctx, EVP_chacha20(), NULL, key->enc, nonce) != 1)
+    if (EVP_EncryptInit_ex(ctx, EVP_chacha20(), NULL, Ke, E_nonce) != 1)
         goto error;
 
-    if (EVP_EncryptUpdate(ctx, to, &tmplen, from, enc_len) != 1)
+    if (EVP_EncryptUpdate(ctx, C, &tmplen, M, M_len) != 1)
         goto error;
 
-    if (EVP_EncryptFinal_ex(ctx, to + tmplen, &tmplen) != 1)
+    if (EVP_EncryptFinal_ex(ctx, C + tmplen, &tmplen) != 1)
         goto error;
+
+
+    {
+        // Additional step - nonce encryption
+        // Not a part of chaSIV
+
+        if (EVP_EncryptInit_ex(ctx, EVP_chacha20(), NULL, key->enc_of_nonce, E_nonce) != 1)
+            goto error;
+
+        if (EVP_EncryptUpdate(ctx, Nc, &tmplen, N, N_len) != 1)
+            goto error;
+
+        if (EVP_EncryptFinal_ex(ctx, Nc + tmplen, &tmplen) != 1)
+            goto error;
+    }
 
     rv = 0;
 
@@ -217,25 +355,27 @@ error:
     return rv;
 }
 
-int asft_pkt_decrypt(
+int asft_chaSIV_decrypt(
     void *pkt,
     void *cpkt,
     size_t cpkt_len,
-    struct asft_key *key
+    struct asft_key *key,
+    size_t N_len
 ) {
     int rv = -1;
     int tmplen;
-    unsigned char *from = cpkt + ASFT_TAG_LEN;
-    unsigned char *to = pkt + ASFT_TAG_LEN;
-    size_t dec_len = cpkt_len - ASFT_TAG_LEN;
-    unsigned char nonce[CHACHA20_MAX_IVLEN] = {0};
+    unsigned char *M = pkt + ASFT_TAG_LEN + N_len;
+    unsigned char *C = cpkt + ASFT_TAG_LEN + N_len;
+    size_t C_len = cpkt_len - ASFT_TAG_LEN - N_len;
+    unsigned char *T = cpkt;
+    unsigned char *K = key->enc;
+    unsigned char *N = pkt + ASFT_TAG_LEN;
+    unsigned char *Nc = cpkt + ASFT_TAG_LEN;
 
     EVP_CIPHER_CTX *ctx = NULL;
 
-    if (cpkt_len < ASFT_TAG_LEN + 1)
+    if (C_len < 1)
         goto error;
-
-    memcpy(nonce + 4, cpkt, ASFT_TAG_LEN);
 
     ctx = EVP_CIPHER_CTX_new();
     if (!ctx) {
@@ -243,18 +383,45 @@ int asft_pkt_decrypt(
         goto error;
     }
 
-    if (EVP_DecryptInit_ex(ctx, EVP_chacha20(), NULL, key->enc, nonce) != 1)
+    unsigned char E_nonce[CHACHA20_MAX_IVLEN] = {0};
+    memcpy(E_nonce + 4, T, ASFT_TAG_LEN);
+
+    {
+        // Additional step - nonce decryption
+        // Not a part of chaSIV
+
+        if (EVP_DecryptInit_ex(ctx, EVP_chacha20(), NULL, key->enc_of_nonce, E_nonce) != 1)
+            goto error;
+
+        if (EVP_DecryptUpdate(ctx, N, &tmplen, Nc, N_len) != 1)
+            goto error;
+
+        if (EVP_DecryptFinal_ex(ctx, N + tmplen, &tmplen) != 1)
+            goto error;
+    }
+
+    unsigned char Ke[ASFT_KEY_LEN] = {0};
+    if (chaSIV_F(Ke, K, N, N_len)) {
+        asft_error("Decryption F() failed\n");
+        goto error;
+    }
+
+    if (EVP_DecryptInit_ex(ctx, EVP_chacha20(), NULL, Ke, E_nonce) != 1)
         goto error;
 
-    if (EVP_DecryptUpdate(ctx, to, &tmplen, from, dec_len) != 1)
+    if (EVP_DecryptUpdate(ctx, M, &tmplen, C, C_len) != 1)
         goto error;
 
-    if (EVP_DecryptFinal_ex(ctx, to + tmplen, &tmplen) != 1)
+    if (EVP_DecryptFinal_ex(ctx, M + tmplen, &tmplen) != 1)
         goto error;
 
-    unsigned char *hmac = HMAC(EVP_blake2b512(), key->auth, sizeof(key->auth), to, dec_len, NULL, NULL);
+    unsigned char T_local[ASFT_TAG_LEN];
+    if (chaSIV_H(T_local, K, N, N_len, M, C_len)) {
+        asft_error("Decryption H() failed\n");
+        goto error;
+    }
 
-    if (!hmac || CRYPTO_memcmp(hmac, cpkt, ASFT_TAG_LEN))
+    if (CRYPTO_memcmp(T_local, T, ASFT_TAG_LEN))
         goto error;
 
     rv = 0;
@@ -322,7 +489,7 @@ int asft_kdf(
 
     if ((rv = asft_kdf_once(key->enc, keymat, keymat_len, info_common, "Encryption")))
         return rv;
-    if ((rv = asft_kdf_once(key->auth, keymat, keymat_len, info_common, "Authentication")))
+    if ((rv = asft_kdf_once(key->enc_of_nonce, keymat, keymat_len, info_common, "Encryption of nonce")))
         return rv;
     if ((rv = asft_kdf_once(key->auth_blob, keymat, keymat_len, info_common, "BLOB Authentication")))
         return rv;
