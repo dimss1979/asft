@@ -162,6 +162,7 @@ int asft_serial_init(char *devname, char *baudrate_string, size_t pkt_len_max)
         goto error;
     }
 
+    asft_info("Maximum serial port packet size is %i\n", p.frame_tx_len_max);
     p.frame_tx_buf = malloc(p.frame_tx_len_max);
     if (!p.frame_tx_buf) {
         asft_error("Serial output frame buffer allocation failed\n");

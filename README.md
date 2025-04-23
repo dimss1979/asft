@@ -7,7 +7,7 @@ Minimum line requirements are:
 
 * 8 bits (8N1)
 * Half-duplex. Full duplex is supported as well.
-* By default, maximum frame size is 222 bytes. Can be reduced if needed.
+* By default, maximum frame size is 118 bytes.
 
 Examples:
 
@@ -25,9 +25,9 @@ Nodes only respond to requests coming from gateway.
 Half-duplex nature and security make `asft` different from many other serial file transfer protocols.
 
 COBS framing is used.
-With default block and header size, maximum frame size is 222 bytes (including start and stop delimiters).
+With default block and header size, maximum frame size is 118 bytes (including start and stop delimiters).
 
-By default, `asft` will transfer files with size up to 4294967295 bytes and filename up to 200 bytes.
+By default, `asft` will transfer files with size up to 1000000 bytes.
 File names beginning with a dot are ignored.
 Symlinks are allowed.
 Other files are ignored.
@@ -91,27 +91,39 @@ In other words, the file moved first or symlink created first in `to_label` dire
 
 ## Gateway operation
 
-The gateway performs the following operations for each configured node in a loop:
+Gateway is the initiator of all packet exchange.
+It will interleave packets intended for all configured nodes in round robin manner.
 
-1. Session key exchange
-2. Try to upload a single file
-3. Try to download a single file
-4. If some file was actually transferred, repeat step 2
-5. Stay idle until timeout expires or there is a file to download
-6. Repeat step 2
+There are three packet types:
 
-When there are multiple files available, the node will spend most time in states 2-3.
-When there are no files and no errors, the node will mostly stay in state 5.
+1. ECDH session key exchange
+2. Data
+3. No data
 
-Upon any error, the node is moved to a special error state.
-After a specified amount of time, it will proceed to step 1 - session key exchange.
-
-The gateway will interleave packets intended for all configured nodes in round robin manner.
+Session key exchange is always performed whenever no session key is available yet or node is recovering from error or timeout.
+Data packets carry file fragments.
+Both data and no data packets carry file fragment acknowledgement flag.
 
 ## Node operation
 
 The node only responds to gateway requests.
 It never initiates communication.
+
+## File transfer
+
+Whenever gateway or node has found a file to transfer, it's read into memory and forms a "BLOB" together with metadata (file size and name).
+Then fragments of BLOB are transferred to the other party using data packets.
+The other party confirms fragment reception using the respective flag in return packets (data or no data).
+It's a sequential, bidirectional file transfer protocol.
+
+When all the fragments are received:
+
+1. Recipient will verify BLOB MAC signature and save the respective file.
+2. Sender will free BLOB, unlink file and look for another file to transfer.
+
+Note that the context of file transfer is preserved across key exchanges and timeouts.
+File transfer will resume after timeout as long as you keep "asft" process running at both ends.
+This is very helpful with slow communication channels.
 
 ## Configuration options
 
@@ -157,7 +169,7 @@ In Debian, the user must be a member of "dialout" group.
 
 ### retries
 
-(gateway only) Packet transmission maximum retry count.
+(gateway only) Packet transmission maximum retry count (1..10).
 
 If exceeded, the node is moved to error state.
 
@@ -198,7 +210,7 @@ Both directories must be created in advance in the working directory of `asft`.
 
 Password is used to derive an initial encryption key for the node.
 As there is no other means to address particular node, its password *must* be unique.
-You're advised to use long and hard to guess passwords.
+You're advised to use long random string as a password.
 
 You can specify multiple nodes for multipoint operation if transmission medium permits.
 
@@ -213,23 +225,20 @@ Both directories must be created in advance in the working directory of `asft`.
 
 Password must be configured the same on gateway and corresponding node.
 As there is no other means to address particular node, its password *must* be unique.
-You're advised to use long and hard to guess passwords.
+You're advised to use long random string as a password.
 
 ## Security
 
+Each node is addressed by its encryption key.
 The gateway and all its nodes share a common network name.
-Each node is addressed by a combination of its password and network name.
-
 All keys are derived using HKDF(BLAKE2b).
 Network name is used as a salt.
 Initial key is derived from node password.
 Session key is derived from "X25519" ECDH shared secret.
 
-Each key consists of two parts: authentication and encryption key.
+Each packet is encrypted and authenticated using chaSIV(chacha20, BLAKE2s).
+Additionally, its nonce is encrypted using plain "chacha20".
+This way, the entire packet is random-looking.
+No inormation is exposed besides packet length and transmission time.
 
-Each packet is authenticated using HMAC(BLAKE2b) and authentication key.
-Then, the packet is encrypted using "chacha20" and encryption key.
-Authentication tag is used as initialization vector for "chacha20".
-
-During session key exchange, ECDH packets are authenticated and encrypted using the initial key.
-All subsequent operations are authenticated and encrypted using session key.
+Gateway and nodes must keep their system clocks synchronized within 3600 seconds.
