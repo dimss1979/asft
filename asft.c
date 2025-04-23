@@ -99,7 +99,12 @@ static int read_config_file(char *filename)
                 asft_error("No retry count specified on line %i\n", line_number);
                 goto error;
             }
-            asft_gateway_set_retries(atoi(retries));
+            uint32_t retries_num = atoi(retries);
+            if (retries_num > ASFT_MAX_RETRIES) {
+                asft_error("Retry count too big on line %i\n", line_number);
+                goto error;
+            }
+            asft_gateway_set_retries(retries_num);
         } else if (!strcmp(token, "retry_timeout")) {
             char *retry_timeout = strtok(NULL, delimiters);
             if (!retry_timeout) {

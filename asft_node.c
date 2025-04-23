@@ -8,6 +8,7 @@
 #include <endian.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <time.h>
 
 #include "asft_proto.h"
 #include "asft_crypto.h"
@@ -68,13 +69,17 @@ error:
 
 static void process_req_ecdh(asft_pkt *req, asft_pkt *resp, size_t *resp_len)
 {
+    uint32_t now = (uint32_t) time(NULL);
     uint32_t rx_timestamp = be32toh(req->ecdh.timestamp);
     if (rx_timestamp <= gw.last_ecdh_timestamp) {
-        asft_error("Repeated timestamp %u, last was %u\n", rx_timestamp, gw.last_ecdh_timestamp);
+        asft_error("Timestamp %u too small, last was %u\n", rx_timestamp, gw.last_ecdh_timestamp);
         return;
-    } else {
-        gw.last_ecdh_timestamp = rx_timestamp;
     }
+    if (llabs((int64_t) rx_timestamp - now) > ASFT_TS_TOLERANCE) {
+        asft_error("Timestamp %u out of tolerance, now it's %u\n", rx_timestamp, now);
+        return;
+    }
+    gw.last_ecdh_timestamp = rx_timestamp;
 
     if (asft_ecdh_prepare(&gw.ecdh, resp->ecdh.public_key))
         goto error;
@@ -109,11 +114,14 @@ static void process_req_data(asft_pkt *req, asft_pkt *resp, size_t *resp_len, bo
     }
 
     if (rx_packet_number <= gw.last_packet_number) {
-        asft_error("Repeated packet number %u, last was %u\n", rx_packet_number, gw.last_packet_number);
+        asft_error("Packet number %u too small, last was %u\n", rx_packet_number, gw.last_packet_number);
         return;
-    } else {
-        gw.last_packet_number = rx_packet_number;
     }
+    if ((rx_packet_number - gw.last_packet_number) > ASFT_MAX_RETRIES) {
+        asft_error("Packet number %u too big, last was %u\n", rx_packet_number, gw.last_packet_number);
+        return;
+    }
+    gw.last_packet_number = rx_packet_number;
 
     uint8_t ack;
     if (have_data) {

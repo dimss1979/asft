@@ -3,6 +3,9 @@
 
 #include <stdint.h>
 
+#define ASFT_TS_TOLERANCE 3600
+#define ASFT_MAX_RETRIES 10
+
 #define ASFT_KEY_LEN   32
 #define ASFT_TAG_LEN   10
 #define ASFT_ECDH_KEY_LEN  32
