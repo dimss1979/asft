@@ -107,6 +107,8 @@ static uint8_t rx_receive_block(struct asft_blob_rx *rx, uint16_t pkt_block_idx,
             asft_error("Rename failed\n");
             return DATA_ACK_NONE;
         }
+
+        sync();
     }
 
     rx->last_block_idx = pkt_block_idx;
@@ -276,6 +278,7 @@ void asft_blob_tx_ack(struct asft_blob_tx *tx, uint8_t ack)
             } else {
                 asft_info("Sent file '%s'\n", tx->path);
                 unlink(tx->path);
+                sync();
                 free(tx->path);
                 free(tx->blob);
                 tx->path = NULL;
