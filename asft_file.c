@@ -13,14 +13,14 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <stdbool.h>
-#include <openssl/hmac.h>
+#include <openssl/evp.h>
 
 #include "asft_misc.h"
 #include "asft_crypto.h"
 
 #include "asft_file.h"
 
-#define BLOB_TAG_LEN      4
+#define BLOB_HASH_LEN     4
 #define FILE_SIZE_MAX     1000000
 #define PATH_LEN (PATH_MAX + 1)
 
@@ -31,7 +31,8 @@ enum data_ack {
 };
 
 struct blob_hdr {
-    uint8_t tag[BLOB_TAG_LEN];
+    uint8_t hash[BLOB_HASH_LEN];
+    uint32_t magic_zero;
     uint32_t blob_len;
     uint8_t filename_len;
     uint8_t data[];
@@ -49,20 +50,19 @@ static uint8_t rx_receive_block(struct asft_blob_rx *rx, uint16_t pkt_block_idx,
     memcpy(&rx->blob[blob_pos], pkt_data, block_len);
 
     if (bytes_left <= ASFT_BLOCK_LEN) {
-        unsigned char *hmac = HMAC(
+        unsigned char blob_digest[EVP_MAX_MD_SIZE];
+        unsigned int blob_digest_size;
+        EVP_Digest(
+            &rx->blob[BLOB_HASH_LEN],
+            rx->blob_len - BLOB_HASH_LEN,
+            blob_digest,
+            &blob_digest_size,
             EVP_blake2b512(),
-            rx->auth_key, ASFT_KEY_LEN,
-            &rx->blob[BLOB_TAG_LEN], rx->blob_len - BLOB_TAG_LEN,
-            NULL, NULL
+            NULL
         );
 
-        if (!hmac) {
-            asft_error("RX BLOB HMAC failed\n");
-            return DATA_ACK_NONE;
-        }
-
-        if (CRYPTO_memcmp(rx->blob, hmac, BLOB_TAG_LEN)) {
-            asft_error("RX BLOB HMAC mismatch\n");
+        if (CRYPTO_memcmp(rx->blob, blob_digest, BLOB_HASH_LEN)) {
+            asft_error("RX BLOB hash mismatch\n");
             return DATA_ACK_RESTART;
         }
 
@@ -188,6 +188,7 @@ void asft_blob_tx_init(struct asft_blob_tx *tx, char *dir)
     }
 
     struct blob_hdr *hdr = (struct blob_hdr*) tx->blob;
+    hdr->magic_zero = 0;
     hdr->blob_len = htobe32(blob_len);
     hdr->filename_len = filename_len;
     tx->blob_len = blob_len;
@@ -216,17 +217,18 @@ void asft_blob_tx_init(struct asft_blob_tx *tx, char *dir)
     close(fd);
     fd = -1;
 
-    unsigned char *hmac = HMAC(
+
+    unsigned char blob_digest[EVP_MAX_MD_SIZE];
+    unsigned int blob_digest_size;
+    EVP_Digest(
+        &tx->blob[BLOB_HASH_LEN],
+        blob_len - BLOB_HASH_LEN,
+        blob_digest,
+        &blob_digest_size,
         EVP_blake2b512(),
-        tx->auth_key, ASFT_KEY_LEN,
-        &tx->blob[BLOB_TAG_LEN], blob_len - BLOB_TAG_LEN,
-        NULL, NULL
+        NULL
     );
-    if (!hmac) {
-        asft_error("TX BLOB HMAC failed\n");
-        goto error;
-    }
-    memcpy(hdr->tag, hmac, BLOB_TAG_LEN);
+    memcpy(hdr->hash, blob_digest, BLOB_HASH_LEN);
 
     return;
 
@@ -302,6 +304,13 @@ void asft_blob_rx_receive(struct asft_blob_rx *rx, uint16_t pkt_block_idx, uint8
         rx->ack = DATA_ACK_OK;
     } else if (pkt_block_idx == 0) {
         struct blob_hdr *hdr = (struct blob_hdr*) pkt_data;
+
+        if (hdr->magic_zero) {
+            asft_error("RX BLOB magic is not zero\n");
+            rx->ack = DATA_ACK_NONE;
+            return;
+        }
+
         size_t blob_len = be32toh(hdr->blob_len);
         size_t blob_len_max = sizeof(struct blob_hdr) + hdr->filename_len + FILE_SIZE_MAX;
         if (blob_len > blob_len_max) {

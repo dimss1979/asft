@@ -4,7 +4,6 @@
 #include "asft_proto.h"
 
 struct asft_blob_tx {
-    uint8_t *auth_key;
     uint8_t *blob;
     char *path;
     size_t blob_len;
@@ -12,7 +11,6 @@ struct asft_blob_tx {
 };
 
 struct asft_blob_rx {
-    uint8_t *auth_key;
     uint8_t *blob;
     size_t blob_len;
     uint16_t last_block_idx;

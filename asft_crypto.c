@@ -491,8 +491,6 @@ int asft_kdf(
         return rv;
     if ((rv = asft_kdf_once(key->enc_of_nonce, keymat, keymat_len, info_common, "Encryption of nonce")))
         return rv;
-    if ((rv = asft_kdf_once(key->auth_blob, keymat, keymat_len, info_common, "BLOB Authentication")))
-        return rv;
 
     return rv;
 }

@@ -129,8 +129,6 @@ static int nodes_init()
             asft_error("Node '%s' initial key derivation failed\n", n->label);
             goto error;
         }
-        n->blob_tx.auth_key = n->ikey_req.auth_blob;
-        n->blob_rx.auth_key = n->ikey_resp.auth_blob;
         if (asprintf(&n->upload_dir, "from_%s", n->label) < 0)
             goto error;
         if (asprintf(&n->download_dir, "to_%s", n->label) < 0)

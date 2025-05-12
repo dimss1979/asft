@@ -53,8 +53,6 @@ static int gateway_init()
         asft_error("Gateway initial key derivation failed\n");
         goto error;
     }
-    gw.blob_tx.auth_key = gw.ikey_resp.auth_blob;
-    gw.blob_rx.auth_key = gw.ikey_req.auth_blob;
     if (asprintf(&gw.upload_dir, "to_%s", gw.label) < 0)
         goto error;
     if (asprintf(&gw.download_dir, "from_%s", gw.label) < 0)
