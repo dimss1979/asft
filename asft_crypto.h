@@ -13,6 +13,13 @@ struct asft_key {
     unsigned char enc_of_nonce[ASFT_KEY_LEN];
 };
 
+struct asft_keystore {
+    uint32_t packet_counter;
+    uint8_t have_new_key;
+    uint8_t new_key[64];
+    uint8_t key[64];
+} __attribute__((packed));
+
 size_t asft_crypto_init(void);
 int asft_crypto_set_network_name(char *new_network_name);
 
@@ -57,6 +64,11 @@ int asft_kdf(
     void *keymat,
     size_t keymat_len,
     void *info_common
+);
+
+int asft_keystore_save(
+    struct asft_keystore *keystore,
+    char *filename
 );
 
 #endif

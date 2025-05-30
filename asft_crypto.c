@@ -8,6 +8,7 @@
 #include <openssl/kdf.h>
 #include <openssl/core_names.h>
 #include <openssl/hmac.h>
+#include <unistd.h>
 
 #include "asft_proto.h"
 #include "asft_misc.h"
@@ -491,6 +492,42 @@ int asft_kdf(
         return rv;
     if ((rv = asft_kdf_once(key->enc_of_nonce, keymat, keymat_len, info_common, "Encryption of nonce")))
         return rv;
+
+    return rv;
+}
+
+int asft_keystore_save(
+    struct asft_keystore *keystore,
+    char *filename
+) {
+    int rv = 1;
+    FILE *f;
+    char tmpfile[PATH_MAX + 1];
+
+    snprintf(tmpfile, sizeof(tmpfile), "%s.tmp", filename);
+    f = fopen(tmpfile, "w");
+
+    if (!f)
+        goto error;
+
+    if (fwrite(keystore, sizeof(*keystore), 1, f) != 1)
+        goto error;
+
+    if (fclose(f))
+        goto error;
+
+    f = NULL;
+
+    if (rename(tmpfile, filename))
+        goto error;
+
+    sync();
+    rv = 0;
+
+error:
+
+    if (f)
+        fclose(f);
 
     return rv;
 }
