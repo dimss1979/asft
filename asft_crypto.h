@@ -20,8 +20,13 @@ struct asft_keystore {
     uint8_t key[64];
 } __attribute__((packed));
 
+struct asft_crypto_ctx;
+
 size_t asft_crypto_init(void);
+
 int asft_crypto_set_network_name(char *new_network_name);
+
+struct asft_crypto_ctx *asft_crypto_ctx_init(char *peer_label);
 
 int asft_ecdh_prepare(
     struct asft_ecdh **ecdh,

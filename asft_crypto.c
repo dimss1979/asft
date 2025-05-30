@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include <stddef.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -9,6 +11,7 @@
 #include <openssl/core_names.h>
 #include <openssl/hmac.h>
 #include <unistd.h>
+#include <assert.h>
 
 #include "asft_proto.h"
 #include "asft_misc.h"
@@ -24,6 +27,11 @@ char *asft_crypto_init_key_resp = "Initial key for response";
 
 struct asft_ecdh {
     EVP_PKEY *pkey;
+};
+
+struct asft_crypto_ctx {
+    char *keystore_filename;
+    char request_hash[64];
 };
 
 static char *network_name = NULL;
@@ -62,6 +70,19 @@ int asft_crypto_set_network_name(char *new_network_name)
         return 0;
     }
     return -1;
+}
+
+struct asft_crypto_ctx *asft_crypto_ctx_init(char *peer_label)
+{
+    struct asft_crypto_ctx *ctx;
+
+    ctx = malloc(sizeof(*ctx));
+    assert(ctx);
+    memset(ctx, 0, sizeof(*ctx));
+    int rv = asprintf(&ctx->keystore_filename, "keystore_%s", peer_label);
+    assert(rv > 0);
+
+    return ctx;
 }
 
 int asft_ecdh_prepare(

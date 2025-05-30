@@ -24,6 +24,7 @@ struct node
     struct node *next;
     char *label;
     char *password;
+    struct asft_crypto_ctx *crypto_ctx;
 
     struct asft_key ikey_req;
     struct asft_key ikey_resp;
@@ -362,6 +363,7 @@ int asft_gateway_add_node(char *label, char *password)
     if (!new->password)
         goto error;
 
+    new->crypto_ctx = asft_crypto_ctx_init(label);
     new->next = node_first;
     node_first = new;
     node_cnt++;

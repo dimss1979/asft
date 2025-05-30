@@ -22,6 +22,7 @@ static struct gateway
 {
     char *label;
     char *password;
+    struct asft_crypto_ctx *crypto_ctx;
 
     struct asft_key ikey_req;
     struct asft_key ikey_resp;
@@ -57,6 +58,8 @@ static int gateway_init()
         goto error;
     if (asprintf(&gw.download_dir, "from_%s", gw.label) < 0)
         goto error;
+
+    gw.crypto_ctx = asft_crypto_ctx_init(gw.label);
 
     return 0;
 
