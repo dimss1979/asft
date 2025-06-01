@@ -23,18 +23,7 @@ struct node
 {
     struct node *next;
     char *label;
-    char *password;
     struct asft_crypto_ctx *crypto_ctx;
-
-    struct asft_key ikey_req;
-    struct asft_key ikey_resp;
-    struct asft_key skey_req;
-    struct asft_key skey_resp;
-    struct asft_ecdh *ecdh;
-    bool have_skey;
-
-    uint16_t packet_number;
-    uint32_t ecdh_timestamp;
 
     uint32_t retry;
     uint64_t pause_until;
@@ -60,7 +49,6 @@ static void proceed_error(struct node *n)
     n->pause_until = 1000 * pause_error + asft_now();
     n->error = true;
     n->retry = 0;
-    n->have_skey = 0;
 }
 
 static void proceed_idle(struct node *n)
@@ -122,14 +110,6 @@ static int nodes_init()
 
     n = node_first;
     while (n) {
-        if (asft_kdf(&n->ikey_req, n->password, strlen(n->password), asft_crypto_init_key_req)) {
-            asft_error("Node '%s' initial key derivation failed\n", n->label);
-            goto error;
-        }
-        if (asft_kdf(&n->ikey_resp, n->password, strlen(n->password), asft_crypto_init_key_resp)) {
-            asft_error("Node '%s' initial key derivation failed\n", n->label);
-            goto error;
-        }
         if (asprintf(&n->upload_dir, "from_%s", n->label) < 0)
             goto error;
         if (asprintf(&n->download_dir, "to_%s", n->label) < 0)
@@ -145,32 +125,8 @@ error:
     return -1;
 }
 
-static void process_resp_ecdh(struct node *n, struct asft_pkt_ecdh *resp, size_t resp_len)
-{
-    n->got_response = true;
-    n->retry = 0;
-
-    if (asft_ecdh_process(&n->ecdh, resp->public_key, &n->skey_req, &n->skey_resp))
-        goto error;
-
-    n->packet_number = 1;
-    n->have_skey = true;
-
-    asft_info("Node '%s' session key exchange complete\n", n->label);
-
-    return;
-
-error:
-
-    asft_error("Node '%s' session key exchange error\n", n->label);
-    proceed_error(n);
-
-    return;
-}
-
 static void process_resp_data(struct node *n, asft_pkt *resp, bool have_data)
 {
-    n->packet_number++;
     n->got_response = true;
     n->retry = 0;
 
@@ -214,35 +170,17 @@ int asft_gateway_loop()
         asft_pkt *cresp = NULL;
         size_t pkt_len = 0, rx_packet_len = 0;
 
+        asft_blob_tx_init(&n->blob_tx, n->download_dir);
+        if (n->blob_tx.blob) {
+            pkt_len = sizeof(pkt.data);
 
-        if (n->have_skey && n->packet_number == 0) {
-            asft_info("Node '%s' session key expired\n", n->label);
-            n->have_skey = false;
-        }
-
-        if (n->have_skey) {
-            asft_blob_tx_init(&n->blob_tx, n->download_dir);
-            if (n->blob_tx.blob) {
-                pkt_len = sizeof(pkt.data);
-
-                uint16_t block_idx = 0;
-                asft_blob_tx_send(&n->blob_tx, &block_idx, pkt.data.data);
-                pkt.data.block_idx = htobe16(block_idx);
-                asft_blob_rx_get_ack(&n->blob_rx, &pkt.b.ack);
-            } else {
-                pkt_len = sizeof(pkt.nodata);
-
-                asft_blob_rx_get_ack(&n->blob_rx, &pkt.b.ack);
-            }
+            uint16_t block_idx = 0;
+            asft_blob_tx_send(&n->blob_tx, &block_idx, pkt.data.data);
+            pkt.data.block_idx = htobe16(block_idx);
         } else {
-            asft_debug("Sending ECDH public key\n");
-            n->ecdh_timestamp = (uint32_t) time(NULL);
-            pkt_len = sizeof(pkt.ecdh);
-
-            if (asft_ecdh_prepare(&n->ecdh, pkt.ecdh.public_key)) {
-                asft_error("Node '%s' cannot prepare session key exchange\n", n->label);
-            }
+            pkt_len = sizeof(pkt.nodata);
         }
+        asft_blob_rx_get_ack(&n->blob_rx, &pkt.b.ack);
 
         rv = asft_encrypt_req(n->crypto_ctx, &cpkt, &pkt, pkt_len);
         if (rv) {
@@ -283,9 +221,6 @@ int asft_gateway_loop()
 
             switch (rx_packet_len)
             {
-                case ASFT_PKT_LEN_ECDH:
-                    process_resp_ecdh(n, &resp.ecdh, rx_packet_len);
-                    break;
                 case ASFT_PKT_LEN_NODATA:
                     process_resp_data(n, &resp, false);
                     break;
@@ -309,7 +244,7 @@ int asft_gateway_loop()
     return 0;
 }
 
-int asft_gateway_add_node(char *label, char *password)
+int asft_gateway_add_node(char *label)
 {
     struct node *new = NULL;
 
@@ -327,10 +262,6 @@ int asft_gateway_add_node(char *label, char *password)
     if (!new->label)
         goto error;
 
-    new->password = strdup(password);
-    if (!new->password)
-        goto error;
-
     new->crypto_ctx = asft_crypto_ctx_init(label);
     if (!new->crypto_ctx)
         goto error;
@@ -345,7 +276,6 @@ error:
 
     if (new) {
         free(new->label);
-        free(new->password);
         free(new);
     }
 

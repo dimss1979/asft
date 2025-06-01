@@ -67,16 +67,6 @@ static int read_config_file(char *filename)
                 asft_error("Invalid mode on line %i: %s\n", line_number, mode);
                 goto error;
             }
-        } else if (!strcmp(token, "network")) {
-            char *network_name = strtok(NULL, delimiters);
-            if (!network_name) {
-                asft_error("No network name specified on line %i\n", line_number);
-                goto error;
-            }
-            if (asft_crypto_set_network_name(network_name)) {
-                asft_error("Cannot set network name on line %i\n", line_number);
-                goto error;
-            }
         } else if (!strcmp(token, "port")) {
             char *device_name, *baudrate;
             device_name = strtok(NULL, delimiters);
@@ -100,10 +90,6 @@ static int read_config_file(char *filename)
                 goto error;
             }
             uint32_t retries_num = atoi(retries);
-            if (retries_num > ASFT_MAX_RETRIES) {
-                asft_error("Retry count too big on line %i\n", line_number);
-                goto error;
-            }
             asft_gateway_set_retries(retries_num);
         } else if (!strcmp(token, "retry_timeout")) {
             char *retry_timeout = strtok(NULL, delimiters);
@@ -127,34 +113,22 @@ static int read_config_file(char *filename)
             }
             asft_gateway_set_pause_error(atoi(pause_error));
         } else if (!strcmp(token, "node")) {
-            char *label, *password;
-            label = strtok(NULL, delimiters);
+            char *label = strtok(NULL, delimiters);
             if (!label) {
                 asft_error("Node label not specified on line %i\n", line_number);
                 goto error;
             }
-            password = strtok(NULL, delimiters);
-            if (!password) {
-                asft_error("Node password not specified on line %i\n", line_number);
-                goto error;
-            }
-            if (asft_gateway_add_node(label, password)) {
+            if (asft_gateway_add_node(label)) {
                 asft_error("Cannot add node on line %i\n", line_number);
                 goto error;
             }
         } else if (!strcmp(token, "gateway")) {
-            char *label, *password;
-            label = strtok(NULL, delimiters);
+            char *label = strtok(NULL, delimiters);
             if (!label) {
                 asft_error("Gateway label not specified on line %i\n", line_number);
                 goto error;
             }
-            password = strtok(NULL, delimiters);
-            if (!password) {
-                asft_error("Gateway password not specified on line %i\n", line_number);
-                goto error;
-            }
-            if (asft_node_set_gateway(label, password)) {
+            if (asft_node_set_gateway(label)) {
                 asft_error("Cannot set gateway on line %i\n", line_number);
                 goto error;
             }
@@ -185,11 +159,6 @@ int main(int argc, char **argv)
 
     if (read_config_file(argv[1])) {
         asft_error("Error while reading configuration file\n");
-        return 1;
-    }
-
-    if (asft_crypto_init()) {
-        asft_error("Cannot initialize crypto\n");
         return 1;
     }
 

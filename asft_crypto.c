@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/random.h>
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
 #include <openssl/core_names.h>
@@ -22,11 +21,9 @@
 
 _Static_assert(ASFT_TAG_LEN + 4 <= CHACHA20_MAX_IVLEN, "MAC tag must not overlap chacha20 32-bit counter");
 
-char *asft_crypto_init_key_req  = "Initial key for request";
-char *asft_crypto_init_key_resp = "Initial key for response";
-
-struct asft_ecdh {
-    EVP_PKEY *pkey;
+struct asft_key {
+    unsigned char enc[ASFT_KEY_LEN];
+    unsigned char enc_of_nonce[ASFT_KEY_LEN];
 };
 
 struct keystore {
@@ -41,18 +38,6 @@ struct asft_crypto_ctx {
     struct keystore ks;
     char request_hash[64];
 };
-
-static char *network_name = NULL;
-
-static void ecdh_cleanup(struct asft_ecdh *ecdh)
-{
-    if (ecdh) {
-        if (ecdh->pkey) {
-            EVP_PKEY_free(ecdh->pkey);
-        }
-        free(ecdh);
-    }
-}
 
 static int HKDF(
     void *key,
@@ -158,156 +143,6 @@ error:
 
     if (f)
         fclose(f);
-
-    return rv;
-}
-
-size_t asft_crypto_init()
-{
-    if (!network_name) {
-        asft_error("Network name not specified\n");
-        goto error;
-    }
-
-    return 0;
-
-error:
-
-    return -1;
-}
-
-int asft_crypto_set_network_name(char *new_network_name)
-{
-    if (network_name) {
-        free(network_name);
-    }
-    network_name = strdup(new_network_name);
-    if (network_name) {
-        return 0;
-    }
-    return -1;
-}
-
-struct asft_crypto_ctx *asft_crypto_ctx_init(char *peer_label)
-{
-    struct asft_crypto_ctx *ctx;
-
-    ctx = malloc(sizeof(*ctx));
-    assert(ctx);
-    memset(ctx, 0, sizeof(*ctx));
-    int rv = asprintf(&ctx->keystore_filename, "keystore_%s", peer_label);
-    assert(rv > 0);
-    if (keystore_load(&ctx->ks, ctx->keystore_filename)) {
-        asft_error("Failed to load keystore %s\n", ctx->keystore_filename);
-        goto error;
-    }
-
-    return ctx;
-
-error:
-
-    free(ctx->keystore_filename);
-    free(ctx);
-
-    return NULL;
-}
-
-int asft_ecdh_prepare(
-    struct asft_ecdh **ecdh,
-    unsigned char *pkey_out
-) {
-    struct asft_ecdh *c = NULL;
-    size_t len = ASFT_ECDH_KEY_LEN;
-    EVP_PKEY_CTX *pctx = NULL;
-    int rv = 1;
-
-    c = malloc(sizeof(*c));
-    if (!c)
-        goto error;
-    memset(c, 0, sizeof(*c));
-
-    pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_X25519, NULL);
-    if (!pctx)
-        goto error;
-
-    if (EVP_PKEY_keygen_init(pctx) != 1)
-        goto error;
-
-    if (EVP_PKEY_keygen(pctx, &c->pkey) != 1)
-        goto error;
-
-    if (EVP_PKEY_get_raw_public_key(c->pkey, pkey_out, &len) != 1)
-        goto error;
-
-    if (*ecdh) {
-        ecdh_cleanup(*ecdh);
-    }
-    *ecdh = c;
-    rv = 0;
-
-error:
-
-    EVP_PKEY_CTX_free(pctx);
-    if (rv) {
-        ecdh_cleanup(c);
-    }
-
-    return rv;
-}
-
-int asft_ecdh_process(
-    struct asft_ecdh **ecdh,
-    unsigned char *peer_pkey_in,
-    struct asft_key *skey_req,
-    struct asft_key *skey_resp
-) {
-    int rv = 1;
-    struct asft_ecdh *c = *ecdh;
-    EVP_PKEY *peer_key = NULL;
-    EVP_PKEY_CTX *pctx = NULL;
-    size_t skeylen;
-    unsigned char shared_secret[ASFT_ECDH_KEY_LEN];
-
-    if (!c)
-        goto error;
-
-    peer_key = EVP_PKEY_new_raw_public_key(EVP_PKEY_X25519, NULL, peer_pkey_in, ASFT_ECDH_KEY_LEN);
-    if (!peer_key)
-        goto error;
-
-    pctx = EVP_PKEY_CTX_new(c->pkey, NULL);
-    if (!pctx)
-        goto error;
-
-    if (EVP_PKEY_derive_init(pctx) != 1)
-        goto error;
-
-    if (EVP_PKEY_derive_set_peer(pctx, peer_key) <= 0)
-        goto error;
-
-    if (EVP_PKEY_derive(pctx, NULL, &skeylen) <= 0)
-        goto error;
-
-    if (skeylen != sizeof(shared_secret))
-        goto error;
-
-    if (EVP_PKEY_derive(pctx, shared_secret, &skeylen) <= 0)
-        goto error;
-
-    if (asft_kdf(skey_req, shared_secret, sizeof(shared_secret), "Session key for request"))
-        goto error;
-
-    if (asft_kdf(skey_resp, shared_secret, sizeof(shared_secret), "Session key for response"))
-        goto error;
-
-    rv = 0;
-
-error:
-
-    EVP_PKEY_free(peer_key);
-    EVP_PKEY_CTX_free(pctx);
-    ecdh_cleanup(c);
-    *ecdh = NULL;
 
     return rv;
 }
@@ -583,65 +418,28 @@ error:
     return rv;
 }
 
-int asft_kdf_once(
-    unsigned char *key,
-    void *keymat,
-    size_t keymat_len,
-    void *info_common,
-    void *info
-) {
-    int rv = 1;
-    EVP_KDF *kdf = NULL;
-    EVP_KDF_CTX *kctx = NULL;
-    OSSL_PARAM params[6], *p = params;
+struct asft_crypto_ctx *asft_crypto_ctx_init(char *peer_label)
+{
+    struct asft_crypto_ctx *ctx;
 
-    if (!network_name || !keymat || !info)
+    ctx = malloc(sizeof(*ctx));
+    assert(ctx);
+    memset(ctx, 0, sizeof(*ctx));
+    int rv = asprintf(&ctx->keystore_filename, "keystore_%s", peer_label);
+    assert(rv > 0);
+    if (keystore_load(&ctx->ks, ctx->keystore_filename)) {
+        asft_error("Failed to load keystore %s\n", ctx->keystore_filename);
         goto error;
+    }
 
-    kdf = EVP_KDF_fetch(NULL, "HKDF", NULL);
-    if (!kdf)
-        goto error;
-
-    kctx = EVP_KDF_CTX_new(kdf);
-    if (!kctx)
-        goto error;
-
-    *p++ = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_DIGEST, SN_blake2b512, strlen(SN_blake2b512));
-    *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_KEY, keymat, keymat_len);
-    *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_SALT, network_name, strlen(network_name));
-    *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_INFO, info_common, strlen(info_common));
-    *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_INFO, info, strlen(info));
-    *p = OSSL_PARAM_construct_end();
-
-    if (EVP_KDF_derive(kctx, key, ASFT_KEY_LEN, params) != 1)
-        goto error;
-
-    rv = 0;
+    return ctx;
 
 error:
 
-    if (kctx)
-        EVP_KDF_CTX_free(kctx);
-    if (kdf)
-        EVP_KDF_free(kdf);
+    free(ctx->keystore_filename);
+    free(ctx);
 
-    return rv;
-}
-
-int asft_kdf(
-    struct asft_key *key,
-    void *keymat,
-    size_t keymat_len,
-    void *info_common
-) {
-    int rv;
-
-    if ((rv = asft_kdf_once(key->enc, keymat, keymat_len, info_common, "Encryption")))
-        return rv;
-    if ((rv = asft_kdf_once(key->enc_of_nonce, keymat, keymat_len, info_common, "Encryption of nonce")))
-        return rv;
-
-    return rv;
+    return NULL;
 }
 
 int asft_set_key(

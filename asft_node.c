@@ -4,7 +4,6 @@
 
 #include <stdio.h>
 #include <string.h>
-#include <sys/random.h>
 #include <endian.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -21,15 +20,7 @@
 static struct gateway
 {
     char *label;
-    char *password;
     struct asft_crypto_ctx *crypto_ctx;
-
-    struct asft_key ikey_req;
-    struct asft_key ikey_resp;
-    struct asft_key skey_req;
-    struct asft_key skey_resp;
-    struct asft_ecdh *ecdh;
-    bool have_skey;
 
     uint16_t last_packet_number;
     uint32_t last_ecdh_timestamp;
@@ -42,16 +33,8 @@ static struct gateway
 
 static int gateway_init()
 {
-    if (!gw.label || !gw.password) {
+    if (!gw.label) {
         asft_error("Gateway not specified\n");
-        goto error;
-    }
-    if(asft_kdf(&gw.ikey_req, gw.password, strlen(gw.password), asft_crypto_init_key_req)) {
-        asft_error("Gateway initial key derivation failed\n");
-        goto error;
-    }
-    if(asft_kdf(&gw.ikey_resp, gw.password, strlen(gw.password), asft_crypto_init_key_resp)) {
-        asft_error("Gateway initial key derivation failed\n");
         goto error;
     }
     if (asprintf(&gw.upload_dir, "to_%s", gw.label) < 0)
@@ -68,30 +51,6 @@ static int gateway_init()
 error:
 
     return -1;
-}
-
-static void process_req_ecdh(asft_pkt *req, asft_pkt *resp, size_t *resp_len)
-{
-    if (asft_ecdh_prepare(&gw.ecdh, resp->ecdh.public_key))
-        goto error;
-
-    if (asft_ecdh_process(&gw.ecdh, req->ecdh.public_key, &gw.skey_req, &gw.skey_resp))
-        goto error;
-
-    gw.have_skey = true;
-    gw.last_packet_number = 0;
-
-    *resp_len = sizeof(resp->ecdh);
-
-    asft_info("Session key exchange complete\n");
-
-    return;
-
-error:
-
-    asft_error("Session key exchange failed\n");
-
-    return;
 }
 
 static void process_req_data(asft_pkt *req, asft_pkt *resp, size_t *resp_len, bool have_data)
@@ -147,9 +106,6 @@ int asft_node_loop()
 
         switch (pkt_len)
         {
-            case ASFT_PKT_LEN_ECDH:
-                process_req_ecdh(&pkt, &resp, &resp_len);
-                break;
             case ASFT_PKT_LEN_NODATA:
                 process_req_data(&pkt, &resp, &resp_len, false);
                 break;
@@ -176,7 +132,7 @@ int asft_node_loop()
     }
 }
 
-int asft_node_set_gateway(char *label, char *password)
+int asft_node_set_gateway(char *label)
 {
     if (strchr(label, '/')) {
         asft_error("Invalid label - contains slash\n");
@@ -184,12 +140,10 @@ int asft_node_set_gateway(char *label, char *password)
     }
 
     free(gw.label);
-    free(gw.password);
 
     gw.label = strdup(label);
-    gw.password = strdup(password);
 
-    if (!gw.label || !gw.password)
+    if (!gw.label)
         goto error;
 
     return 0;
@@ -197,10 +151,7 @@ int asft_node_set_gateway(char *label, char *password)
 error:
 
     free(gw.label);
-    free(gw.password);
-
     gw.label = NULL;
-    gw.password = NULL;
 
     return -1;
 }
