@@ -342,10 +342,6 @@ void asft_blob_rx_receive(struct asft_blob_rx *rx, uint16_t pkt_block_idx, uint8
 
 void asft_blob_rx_get_ack(struct asft_blob_rx *rx, uint8_t *ack)
 {
-    if (rx->blob) {
-        *ack = rx->ack;
-        rx->ack = DATA_ACK_NONE;
-    } else {
-        *ack = DATA_ACK_NONE;
-    }
+    *ack = rx->ack;
+    rx->ack = DATA_ACK_NONE;
 }
