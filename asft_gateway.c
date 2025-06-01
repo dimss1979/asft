@@ -355,6 +355,9 @@ int asft_gateway_add_node(char *label, char *password)
         goto error;
 
     new->crypto_ctx = asft_crypto_ctx_init(label);
+    if (!new->crypto_ctx)
+        goto error;
+
     new->next = node_first;
     node_first = new;
     node_cnt++;

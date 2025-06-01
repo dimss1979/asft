@@ -60,6 +60,8 @@ static int gateway_init()
         goto error;
 
     gw.crypto_ctx = asft_crypto_ctx_init(gw.label);
+    if (!gw.crypto_ctx)
+        goto error;
 
     return 0;
 

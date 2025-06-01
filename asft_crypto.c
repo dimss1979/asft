@@ -38,6 +38,7 @@ struct keystore {
 
 struct asft_crypto_ctx {
     char *keystore_filename;
+    struct keystore ks;
     char request_hash[64];
 };
 
@@ -92,6 +93,35 @@ error:
         EVP_KDF_CTX_free(kctx);
     if (kdf)
         EVP_KDF_free(kdf);
+
+    return rv;
+}
+
+static int keystore_load(
+    struct keystore *ks,
+    char *filename
+) {
+    int rv = 1;
+    FILE *f;
+
+    f = fopen(filename, "r");
+
+    if (!f)
+        goto error;
+
+    if (fread(ks, sizeof(*ks), 1, f) != 1)
+        goto error;
+
+    if (fclose(f))
+        goto error;
+
+    f = NULL;
+    rv = 0;
+
+error:
+
+    if (f)
+        fclose(f);
 
     return rv;
 }
@@ -167,8 +197,19 @@ struct asft_crypto_ctx *asft_crypto_ctx_init(char *peer_label)
     memset(ctx, 0, sizeof(*ctx));
     int rv = asprintf(&ctx->keystore_filename, "keystore_%s", peer_label);
     assert(rv > 0);
+    if (keystore_load(&ctx->ks, ctx->keystore_filename)) {
+        asft_error("Failed to load keystore %s\n", ctx->keystore_filename);
+        goto error;
+    }
 
     return ctx;
+
+error:
+
+    free(ctx->keystore_filename);
+    free(ctx);
+
+    return NULL;
 }
 
 int asft_ecdh_prepare(
