@@ -29,6 +29,13 @@ struct asft_ecdh {
     EVP_PKEY *pkey;
 };
 
+struct keystore {
+    uint32_t packet_counter;
+    uint8_t have_new_key;
+    uint8_t new_key[64];
+    uint8_t key[64];
+} __attribute__((packed));
+
 struct asft_crypto_ctx {
     char *keystore_filename;
     char request_hash[64];
@@ -44,6 +51,85 @@ static void ecdh_cleanup(struct asft_ecdh *ecdh)
         }
         free(ecdh);
     }
+}
+
+static int HKDF(
+    void *key,
+    size_t key_len,
+    void *keymat,
+    size_t keymat_len,
+    void *info
+) {
+    int rv = 1;
+    EVP_KDF *kdf = NULL;
+    EVP_KDF_CTX *kctx = NULL;
+    OSSL_PARAM params[4], *p = params;
+
+    if (!key || !keymat || !info || !key_len || !keymat_len)
+        goto error;
+
+    kdf = EVP_KDF_fetch(NULL, "HKDF", NULL);
+    if (!kdf)
+        goto error;
+
+    kctx = EVP_KDF_CTX_new(kdf);
+    if (!kctx)
+        goto error;
+
+    *p++ = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_DIGEST, SN_blake2b512, strlen(SN_blake2b512));
+    *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_KEY, keymat, keymat_len);
+    *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_INFO, info, strlen(info));
+    *p = OSSL_PARAM_construct_end();
+
+    if (EVP_KDF_derive(kctx, key, key_len, params) != 1)
+        goto error;
+
+    rv = 0;
+
+error:
+
+    if (kctx)
+        EVP_KDF_CTX_free(kctx);
+    if (kdf)
+        EVP_KDF_free(kdf);
+
+    return rv;
+}
+
+static int keystore_save(
+    struct keystore *ks,
+    char *filename
+) {
+    int rv = 1;
+    FILE *f;
+    char tmpfile[PATH_MAX + 1];
+
+    snprintf(tmpfile, sizeof(tmpfile), "%s.tmp", filename);
+    f = fopen(tmpfile, "w");
+
+    if (!f)
+        goto error;
+
+    if (fwrite(ks, sizeof(*ks), 1, f) != 1)
+        goto error;
+
+    if (fclose(f))
+        goto error;
+
+    f = NULL;
+
+    if (rename(tmpfile, filename))
+        goto error;
+
+    sync();
+    rv = 0;
+
+error:
+
+    if (f)
+        fclose(f);
+
+    return rv;
 }
 
 size_t asft_crypto_init()
@@ -517,38 +603,27 @@ int asft_kdf(
     return rv;
 }
 
-int asft_keystore_save(
-    struct asft_keystore *keystore,
-    char *filename
+int asft_set_key(
+    char *filename,
+    char *keymat,
+    size_t keymat_len
 ) {
-    int rv = 1;
-    FILE *f;
-    char tmpfile[PATH_MAX + 1];
+    int rv = 0;
+    struct keystore ks = {0};
 
-    snprintf(tmpfile, sizeof(tmpfile), "%s.tmp", filename);
-    f = fopen(tmpfile, "w");
-
-    if (!f)
+    rv = HKDF(
+        ks.key,
+        sizeof(ks.key),
+        keymat,
+        keymat_len,
+        "asft-initial-key"
+    );
+    if (rv)
         goto error;
 
-    if (fwrite(keystore, sizeof(*keystore), 1, f) != 1)
-        goto error;
-
-    if (fclose(f))
-        goto error;
-
-    f = NULL;
-
-    if (rename(tmpfile, filename))
-        goto error;
-
-    sync();
-    rv = 0;
+    rv = keystore_save(&ks, filename);
 
 error:
-
-    if (f)
-        fclose(f);
 
     return rv;
 }
