@@ -33,22 +33,6 @@ int asft_ecdh_process(
     struct asft_key *skey_resp
 );
 
-int asft_chaSIV_encrypt(
-    void *cpkt,
-    void *pkt,
-    size_t pkt_len,
-    struct asft_key *key,
-    size_t N_len
-);
-
-int asft_chaSIV_decrypt(
-    void *pkt,
-    void *cpkt,
-    size_t cpkt_len,
-    struct asft_key *key,
-    size_t N_len
-);
-
 int asft_kdf_once(
     unsigned char *key,
     void *keymat,
@@ -64,11 +48,38 @@ int asft_kdf(
     void *info_common
 );
 
-
 int asft_set_key(
     char *filename,
     char *keymat,
     size_t keymat_len
+);
+
+int asft_encrypt_req(
+    struct asft_crypto_ctx *ctx,
+    asft_pkt *cpkt,
+    asft_pkt *pkt,
+    size_t pkt_len
+);
+
+int asft_decrypt_req(
+    struct asft_crypto_ctx *ctx,
+    asft_pkt *pkt,
+    asft_pkt *cpkt,
+    size_t cpkt_len
+);
+
+int asft_encrypt_resp(
+    struct asft_crypto_ctx *ctx,
+    asft_pkt *cpkt,
+    asft_pkt *pkt,
+    size_t pkt_len
+);
+
+int asft_decrypt_resp(
+    struct asft_crypto_ctx *ctx,
+    asft_pkt *pkt,
+    asft_pkt *cpkt,
+    size_t cpkt_len
 );
 
 #endif

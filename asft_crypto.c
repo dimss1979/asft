@@ -30,7 +30,7 @@ struct asft_ecdh {
 };
 
 struct keystore {
-    uint32_t packet_counter;
+    uint32_t pn;
     uint8_t have_new_key;
     uint8_t new_key[64];
     uint8_t key[64];
@@ -428,7 +428,7 @@ error:
     return rv;
 }
 
-int asft_chaSIV_encrypt(
+static int chaSIV_encrypt(
     void *cpkt,
     void *pkt,
     size_t pkt_len,
@@ -504,7 +504,7 @@ error:
     return rv;
 }
 
-int asft_chaSIV_decrypt(
+static int chaSIV_decrypt(
     void *pkt,
     void *cpkt,
     size_t cpkt_len,
@@ -663,6 +663,174 @@ int asft_set_key(
         goto error;
 
     rv = keystore_save(&ks, filename);
+
+error:
+
+    return rv;
+}
+
+int asft_encrypt_req(
+    struct asft_crypto_ctx *ctx,
+    asft_pkt *cpkt,
+    asft_pkt *pkt,
+    size_t pkt_len
+) {
+    int rv = 1;
+
+    uint32_t pn = be32toh(ctx->ks.pn) + 1;
+    pkt->b.nonce = htobe32(pn);
+
+    struct asft_key key;
+    rv = HKDF(
+        key.enc, sizeof(key.enc),
+        ctx->ks.key, sizeof(ctx->ks.key),
+        "asft-request-key"
+    );
+    if (rv)
+        goto error;
+
+    rv = HKDF(
+        key.enc_of_nonce, sizeof(key.enc_of_nonce),
+        ctx->ks.key, sizeof(ctx->ks.key),
+        "asft-request-key-for-nonce"
+    );
+    if (rv)
+        goto error;
+
+    rv = chaSIV_encrypt(cpkt, pkt, pkt_len, &key, sizeof(pkt->b.nonce));
+    if (rv)
+        goto error;
+
+    ctx->ks.pn = htobe32(pn);
+    keystore_save(&ctx->ks, ctx->keystore_filename);
+    rv = 0;
+
+error:
+
+    return rv;
+}
+
+int asft_decrypt_req(
+    struct asft_crypto_ctx *ctx,
+    asft_pkt *pkt,
+    asft_pkt *cpkt,
+    size_t cpkt_len
+) {
+    int rv = 1;
+
+    struct asft_key key;
+    rv = HKDF(
+        key.enc, sizeof(key.enc),
+        ctx->ks.key, sizeof(ctx->ks.key),
+        "asft-request-key"
+    );
+    if (rv)
+        goto error;
+
+    rv = HKDF(
+        key.enc_of_nonce, sizeof(key.enc_of_nonce),
+        ctx->ks.key, sizeof(ctx->ks.key),
+        "asft-request-key-for-nonce"
+    );
+    if (rv)
+        goto error;
+
+    rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, &key, sizeof(pkt->b.nonce));
+    if (rv)
+        goto error;
+
+    uint32_t pn_prev = be32toh(ctx->ks.pn);
+    uint32_t pn_new = be32toh(pkt->b.nonce);
+    if (pn_new <= pn_prev) {
+        asft_error("Replay detected %s\n", ctx->keystore_filename);
+        goto error;
+    }
+
+    ctx->ks.pn = htobe32(pn_new);
+    keystore_save(&ctx->ks, ctx->keystore_filename);
+    rv = 0;
+
+error:
+
+    return rv;
+}
+
+int asft_encrypt_resp(
+    struct asft_crypto_ctx *ctx,
+    asft_pkt *cpkt,
+    asft_pkt *pkt,
+    size_t pkt_len
+) {
+    int rv = 1;
+
+    uint32_t pn = be32toh(ctx->ks.pn);
+    pkt->b.nonce = htobe32(pn);
+
+    struct asft_key key;
+    rv = HKDF(
+        key.enc, sizeof(key.enc),
+        ctx->ks.key, sizeof(ctx->ks.key),
+        "asft-response-key"
+    );
+    if (rv)
+        goto error;
+
+    rv = HKDF(
+        key.enc_of_nonce, sizeof(key.enc_of_nonce),
+        ctx->ks.key, sizeof(ctx->ks.key),
+        "asft-response-key-for-nonce"
+    );
+    if (rv)
+        goto error;
+
+    rv = chaSIV_encrypt(cpkt, pkt, pkt_len, &key, sizeof(pkt->b.nonce));
+    if (rv)
+        goto error;
+
+    rv = 0;
+
+error:
+
+    return rv;
+}
+
+int asft_decrypt_resp(
+    struct asft_crypto_ctx *ctx,
+    asft_pkt *pkt,
+    asft_pkt *cpkt,
+    size_t cpkt_len
+) {
+    int rv = 1;
+
+    struct asft_key key;
+    rv = HKDF(
+        key.enc, sizeof(key.enc),
+        ctx->ks.key, sizeof(ctx->ks.key),
+        "asft-response-key"
+    );
+    if (rv)
+        goto error;
+
+    rv = HKDF(
+        key.enc_of_nonce, sizeof(key.enc_of_nonce),
+        ctx->ks.key, sizeof(ctx->ks.key),
+        "asft-response-key-for-nonce"
+    );
+    if (rv)
+        goto error;
+
+    rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, &key, sizeof(pkt->b.nonce));
+    if (rv)
+        goto error;
+
+    uint32_t pn_prev = be32toh(ctx->ks.pn);
+    uint32_t pn_new = be32toh(pkt->b.nonce);
+    if (pn_new != pn_prev) {
+        asft_error("Replay detected %s\n", ctx->keystore_filename);
+        goto error;
+    }
+
+    rv = 0;
 
 error:
 
