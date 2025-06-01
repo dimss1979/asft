@@ -147,7 +147,7 @@ error:
 
 static void process_resp_ecdh(struct node *n, struct asft_pkt_ecdh *resp, size_t resp_len)
 {
-    uint32_t rx_timestamp = be32toh(resp->timestamp);
+    uint32_t rx_timestamp = be32toh(resp->b.nonce);
 
     if (rx_timestamp == n->ecdh_timestamp) {
         n->got_response = true;
@@ -178,11 +178,7 @@ error:
 static void process_resp_data(struct node *n, asft_pkt *resp, bool have_data)
 {
     uint16_t rx_packet_number;
-    if (have_data) {
-        rx_packet_number = be16toh(resp->data.packet_number);
-    } else {
-        rx_packet_number = be16toh(resp->nodata.packet_number);
-    }
+    rx_packet_number = be32toh(resp->data.b.nonce);
 
     if (rx_packet_number == n->packet_number) {
         n->packet_number++;
@@ -193,13 +189,11 @@ static void process_resp_data(struct node *n, asft_pkt *resp, bool have_data)
         return;
     }
 
-    uint8_t ack;
     if (have_data) {
         asft_blob_rx_receive(&n->blob_rx, be16toh(resp->data.block_idx), resp->data.data, n->upload_dir);
-        ack = resp->data.ack;
-    } else {
-        ack = resp->nodata.ack;
     }
+    uint8_t ack = resp->b.ack;
+
     asft_blob_tx_ack(&n->blob_tx, ack);
 
     asft_blob_tx_init(&n->blob_tx, n->download_dir);
@@ -235,7 +229,7 @@ int asft_gateway_loop()
         struct asft_key *key_resp = &n->ikey_resp;
         asft_pkt pkt = {0}, cpkt = {0}, resp = {0};
         asft_pkt *cresp = NULL;
-        size_t pkt_len = 0, rx_packet_len = 0, nonce_len = 0;
+        size_t pkt_len = 0, rx_packet_len = 0, nonce_len = sizeof(pkt.b.nonce);
 
 
         if (n->have_skey && n->packet_number == 0) {
@@ -250,26 +244,23 @@ int asft_gateway_loop()
             asft_blob_tx_init(&n->blob_tx, n->download_dir);
             if (n->blob_tx.blob) {
                 pkt_len = sizeof(pkt.data);
-                pkt.data.packet_number = htobe16(n->packet_number);
-                nonce_len = sizeof(pkt.data.packet_number);
+                pkt.b.nonce = htobe32(n->packet_number);
 
                 uint16_t block_idx = 0;
                 asft_blob_tx_send(&n->blob_tx, &block_idx, pkt.data.data);
                 pkt.data.block_idx = htobe16(block_idx);
-                asft_blob_rx_get_ack(&n->blob_rx, &pkt.data.ack);
+                asft_blob_rx_get_ack(&n->blob_rx, &pkt.b.ack);
             } else {
                 pkt_len = sizeof(pkt.nodata);
-                pkt.nodata.packet_number = htobe16(n->packet_number);
-                nonce_len = sizeof(pkt.nodata.packet_number);
+                pkt.b.nonce = htobe32(n->packet_number);
 
-                asft_blob_rx_get_ack(&n->blob_rx, &pkt.nodata.ack);
+                asft_blob_rx_get_ack(&n->blob_rx, &pkt.b.ack);
             }
         } else {
             asft_debug("Sending ECDH public key\n");
             n->ecdh_timestamp = (uint32_t) time(NULL);
-            pkt.ecdh.timestamp = htobe32(n->ecdh_timestamp);
+            pkt.b.nonce = htobe32(n->ecdh_timestamp);
             pkt_len = sizeof(pkt.ecdh);
-            nonce_len = sizeof(pkt.ecdh.timestamp);
 
             if (asft_ecdh_prepare(&n->ecdh, pkt.ecdh.public_key)) {
                 asft_error("Node '%s' cannot prepare session key exchange\n", n->label);

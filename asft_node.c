@@ -71,7 +71,7 @@ error:
 static void process_req_ecdh(asft_pkt *req, asft_pkt *resp, size_t *resp_len)
 {
     uint32_t now = (uint32_t) time(NULL);
-    uint32_t rx_timestamp = be32toh(req->ecdh.timestamp);
+    uint32_t rx_timestamp = be32toh(req->b.nonce);
     if (rx_timestamp <= gw.last_ecdh_timestamp) {
         asft_error("Timestamp %u too small, last was %u\n", rx_timestamp, gw.last_ecdh_timestamp);
         return;
@@ -92,7 +92,7 @@ static void process_req_ecdh(asft_pkt *req, asft_pkt *resp, size_t *resp_len)
     gw.last_packet_number = 0;
 
     *resp_len = sizeof(resp->ecdh);
-    resp->ecdh.timestamp = htobe32(rx_timestamp);
+    resp->b.nonce = htobe32(rx_timestamp);
 
     asft_info("Session key exchange complete\n");
 
@@ -107,12 +107,7 @@ error:
 
 static void process_req_data(asft_pkt *req, asft_pkt *resp, size_t *resp_len, bool have_data)
 {
-    uint16_t rx_packet_number;
-    if (have_data) {
-        rx_packet_number = be16toh(req->data.packet_number);
-    } else {
-        rx_packet_number = be16toh(req->nodata.packet_number);
-    }
+    uint16_t rx_packet_number = be32toh(req->b.nonce);
 
     if (rx_packet_number <= gw.last_packet_number) {
         asft_error("Packet number %u too small, last was %u\n", rx_packet_number, gw.last_packet_number);
@@ -124,13 +119,10 @@ static void process_req_data(asft_pkt *req, asft_pkt *resp, size_t *resp_len, bo
     }
     gw.last_packet_number = rx_packet_number;
 
-    uint8_t ack;
     if (have_data) {
         asft_blob_rx_receive(&gw.blob_rx, be16toh(req->data.block_idx), req->data.data, gw.download_dir);
-        ack = req->data.ack;
-    } else {
-        ack = req->nodata.ack;
     }
+    uint8_t ack = req->b.ack;
     asft_blob_tx_ack(&gw.blob_tx, ack);
     asft_blob_tx_init(&gw.blob_tx, gw.upload_dir);
 
@@ -140,14 +132,11 @@ static void process_req_data(asft_pkt *req, asft_pkt *resp, size_t *resp_len, bo
         uint16_t block_idx = 0;
         asft_blob_tx_send(&gw.blob_tx, &block_idx, resp->data.data);
         resp->data.block_idx = htobe16(block_idx);
-        asft_blob_rx_get_ack(&gw.blob_rx, &resp->data.ack);
-        resp->data.packet_number = htobe16(rx_packet_number);
     } else {
         *resp_len = sizeof(resp->nodata);
-
-        asft_blob_rx_get_ack(&gw.blob_rx, &resp->nodata.ack);
-        resp->nodata.packet_number = htobe16(rx_packet_number);
     }
+    asft_blob_rx_get_ack(&gw.blob_rx, &resp->b.ack);
+    resp->b.nonce = htobe32(rx_packet_number);
 }
 
 int asft_node_loop()
@@ -176,31 +165,28 @@ int asft_node_loop()
 
         rv = 1;
         if (gw.have_skey && pkt_len != ASFT_PKT_LEN_ECDH) {
-            rv = asft_chaSIV_decrypt(&pkt, cpkt, pkt_len, &gw.skey_req, sizeof(pkt.data.packet_number));
+            rv = asft_chaSIV_decrypt(&pkt, cpkt, pkt_len, &gw.skey_req, sizeof(pkt.b.nonce));
         } else if (pkt_len == ASFT_PKT_LEN_ECDH) {
-            rv = asft_chaSIV_decrypt(&pkt, cpkt, pkt_len, &gw.ikey_req, sizeof(pkt.ecdh.timestamp));
+            rv = asft_chaSIV_decrypt(&pkt, cpkt, pkt_len, &gw.ikey_req, sizeof(pkt.b.nonce));
         }
         if (rv) {
             asft_debug("Decryption failed\n");
             continue;
         }
 
-        size_t resp_nonce_len = 0;
+        size_t resp_nonce_len = sizeof(pkt.b.nonce);
         struct asft_key *key_resp = &gw.skey_resp;
         switch (pkt_len)
         {
             case ASFT_PKT_LEN_ECDH:
                 process_req_ecdh(&pkt, &resp, &resp_len);
                 key_resp = &gw.ikey_resp;
-                resp_nonce_len = sizeof(pkt.ecdh.timestamp);
                 break;
             case ASFT_PKT_LEN_NODATA:
                 process_req_data(&pkt, &resp, &resp_len, false);
-                resp_nonce_len = sizeof(pkt.data.packet_number);
                 break;
             case ASFT_PKT_LEN_DATA:
                 process_req_data(&pkt, &resp, &resp_len, true);
-                resp_nonce_len = sizeof(pkt.data.packet_number);
                 break;
             default:
                 asft_error("Unknown request length %u bytes\n", pkt_len);
