@@ -22,9 +22,6 @@ static struct gateway
     char *label;
     struct asft_crypto_ctx *crypto_ctx;
 
-    uint16_t last_packet_number;
-    uint32_t last_ecdh_timestamp;
-
     struct asft_blob_tx blob_tx;
     struct asft_blob_rx blob_rx;
     char *upload_dir;

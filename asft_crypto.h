@@ -3,11 +3,6 @@
 
 #include "asft_proto.h"
 
-extern char *asft_crypto_init_key_req;
-extern char *asft_crypto_init_key_resp;
-
-struct asft_ecdh;
-
 struct asft_crypto_ctx;
 
 struct asft_crypto_ctx *asft_crypto_ctx_init(char *peer_label);
