@@ -3,7 +3,6 @@
 
 #include <stdint.h>
 
-#define ASFT_KEY_LEN   32
 #define ASFT_TAG_LEN   10
 #define ASFT_BLOCK_LEN  100
 

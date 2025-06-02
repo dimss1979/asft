@@ -17,13 +17,14 @@
 
 #include "asft_crypto.h"
 
-#define CHACHA20_MAX_IVLEN 16
+#define CHACHA_KEY_SIZE 32
+#define CHACHA_CTR_SIZE 16
 
-_Static_assert(ASFT_TAG_LEN + 4 <= CHACHA20_MAX_IVLEN, "MAC tag must not overlap chacha20 32-bit counter");
+_Static_assert(ASFT_TAG_LEN + 4 <= CHACHA_CTR_SIZE, "MAC tag must not overlap chacha20 32-bit counter");
 
 struct asft_key {
-    unsigned char enc[ASFT_KEY_LEN];
-    unsigned char enc_of_nonce[ASFT_KEY_LEN];
+    unsigned char enc[CHACHA_KEY_SIZE];
+    unsigned char enc_of_nonce[CHACHA_KEY_SIZE];
 };
 
 struct keystore {
@@ -178,7 +179,7 @@ static int chaSIV_H(
         goto error;
     }
 
-    if (EVP_DigestUpdate(mdctx, K, ASFT_KEY_LEN) != 1) {
+    if (EVP_DigestUpdate(mdctx, K, CHACHA_KEY_SIZE) != 1) {
         asft_error("Cannot update digest\n");
         goto error;
     }
@@ -235,7 +236,10 @@ static int chaSIV_F(
         goto error;
     }
 
-    if (EVP_MAC_init(ctx, K, ASFT_KEY_LEN, NULL) != 1) {
+    // From OpenSSL doc:
+    // BLAKE2SMAC max key size == chacha20 key size (32 bytes)
+
+    if (EVP_MAC_init(ctx, K, CHACHA_KEY_SIZE, NULL) != 1) {
         asft_error("Cannot initialize MAC\n");
         goto error;
     }
@@ -246,7 +250,7 @@ static int chaSIV_F(
     }
 
     size_t output_len = 0;
-    if (EVP_MAC_final(ctx, Ke, &output_len, ASFT_KEY_LEN) != 1) {
+    if (EVP_MAC_final(ctx, Ke, &output_len, CHACHA_KEY_SIZE) != 1) {
         asft_error("Cannot finalize MAC of nonce\n");
         goto error;
     }
@@ -290,10 +294,10 @@ static int chaSIV_encrypt(
         goto error;
     }
 
-    unsigned char E_nonce[CHACHA20_MAX_IVLEN] = {0};
+    unsigned char E_nonce[CHACHA_CTR_SIZE] = {0};
     memcpy(E_nonce + 4, T, ASFT_TAG_LEN);
 
-    unsigned char Ke[ASFT_KEY_LEN] = {0};
+    unsigned char Ke[CHACHA_KEY_SIZE] = {0};
     if (chaSIV_F(Ke, K, N, N_len)) {
         asft_error("Encryption F() failed\n");
         goto error;
@@ -367,7 +371,7 @@ static int chaSIV_decrypt(
         goto error;
     }
 
-    unsigned char E_nonce[CHACHA20_MAX_IVLEN] = {0};
+    unsigned char E_nonce[CHACHA_CTR_SIZE] = {0};
     memcpy(E_nonce + 4, T, ASFT_TAG_LEN);
 
     {
@@ -384,7 +388,7 @@ static int chaSIV_decrypt(
             goto error;
     }
 
-    unsigned char Ke[ASFT_KEY_LEN] = {0};
+    unsigned char Ke[CHACHA_KEY_SIZE] = {0};
     if (chaSIV_F(Ke, K, N, N_len)) {
         asft_error("Decryption F() failed\n");
         goto error;
