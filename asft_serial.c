@@ -251,7 +251,7 @@ int asft_serial_send(unsigned char *pkt, size_t pkt_len)
         return -EINVAL;
     }
 
-    p.frame_tx_buf[1] = 0;
+    p.frame_tx_buf[0] = 0;
     frame_len = 1;
     frame_len += cobs_encode(pkt, pkt_len, &p.frame_tx_buf[1]);
     p.frame_tx_buf[frame_len] = 0;
