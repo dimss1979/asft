@@ -11,6 +11,7 @@
 #include <openssl/hmac.h>
 #include <unistd.h>
 #include <assert.h>
+#include <stdbool.h>
 
 #include "asft_proto.h"
 #include "asft_misc.h"
@@ -39,6 +40,12 @@ struct asft_crypto_ctx {
     struct keystore ks;
     char request_hash[64];
 };
+
+struct ratchet_input {
+    char request_hash[64];
+    char response_hash[64];
+    char prev_key[64];
+} __attribute__((packed));
 
 static int HKDF(
     void *key,
@@ -520,8 +527,9 @@ int asft_decrypt_req(
     size_t cpkt_len
 ) {
     int rv = 1;
-
+    bool using_new_key = false;
     struct asft_key key;
+
     rv = HKDF(
         key.enc, sizeof(key.enc),
         ctx->ks.key, sizeof(ctx->ks.key),
@@ -539,16 +547,48 @@ int asft_decrypt_req(
         goto error;
 
     rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, &key, sizeof(pkt->b.nonce));
+
+    if (rv && ctx->ks.have_new_key) {
+        rv = HKDF(
+            key.enc, sizeof(key.enc),
+            ctx->ks.new_key, sizeof(ctx->ks.new_key),
+            "asft-request-key"
+        );
+        if (rv)
+            goto error;
+
+        rv = HKDF(
+            key.enc_of_nonce, sizeof(key.enc_of_nonce),
+            ctx->ks.new_key, sizeof(ctx->ks.new_key),
+            "asft-request-key-for-nonce"
+        );
+        if (rv)
+            goto error;
+
+        rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, &key, sizeof(pkt->b.nonce));
+        if (rv)
+            goto error;
+
+        using_new_key = true;
+    }
+
     if (rv)
         goto error;
 
     uint32_t pn_prev = be32toh(ctx->ks.pn);
     uint32_t pn_new = be32toh(pkt->b.nonce);
-    if (pn_new <= pn_prev) {
+    if (!using_new_key && pn_new <= pn_prev) {
         asft_error("Replay detected %s\n", ctx->keystore_filename);
         goto error;
     }
 
+    if (using_new_key) {
+        _Static_assert(sizeof(ctx->ks.key) == sizeof(ctx->ks.new_key));
+
+        memcpy(ctx->ks.key, ctx->ks.new_key, sizeof(ctx->ks.key));
+        memset(ctx->ks.new_key, 0, sizeof(ctx->ks.new_key));
+        ctx->ks.have_new_key = 0;
+    }
     ctx->ks.pn = htobe32(pn_new);
     keystore_save(&ctx->ks, ctx->keystore_filename);
     rv = 0;
@@ -590,6 +630,20 @@ int asft_encrypt_resp(
     if (rv)
         goto error;
 
+    struct ratchet_input ri = {0};
+    memcpy(ri.prev_key, ctx->ks.key, sizeof(ctx->ks.key));
+    char ratchet_output[sizeof(ctx->ks.new_key)];
+    rv = HKDF(
+        ratchet_output, sizeof(ratchet_output),
+        &ri, sizeof(ri),
+        "asft-ratchet"
+    );
+    if (rv)
+        goto error;
+
+    memcpy(ctx->ks.new_key, ratchet_output, sizeof(ratchet_output));
+    ctx->ks.have_new_key = 1;
+    keystore_save(&ctx->ks, ctx->keystore_filename);
     rv = 0;
 
 error:
@@ -633,6 +687,19 @@ int asft_decrypt_resp(
         goto error;
     }
 
+    struct ratchet_input ri = {0};
+    memcpy(ri.prev_key, ctx->ks.key, sizeof(ctx->ks.key));
+    char ratchet_output[sizeof(ctx->ks.key)];
+    rv = HKDF(
+        ratchet_output, sizeof(ratchet_output),
+        &ri, sizeof(ri),
+        "asft-ratchet"
+    );
+    if (rv)
+        goto error;
+
+    memcpy(ctx->ks.key, ratchet_output, sizeof(ratchet_output));
+    keystore_save(&ctx->ks, ctx->keystore_filename);
     rv = 0;
 
 error:
