@@ -490,6 +490,14 @@ int asft_encrypt_req(
     uint32_t pn = be32toh(ctx->ks.pn) + 1;
     pkt->b.nonce = htobe32(pn);
 
+    rv = HKDF(
+        ctx->request_hash, sizeof(ctx->request_hash),
+        &pkt->b.nonce, pkt_len - ASFT_TAG_LEN,
+        "asft-request-hash"
+    );
+    if (rv)
+        goto error;
+
     struct asft_key key;
     rv = HKDF(
         key.enc, sizeof(key.enc),
@@ -582,6 +590,14 @@ int asft_decrypt_req(
         goto error;
     }
 
+    rv = HKDF(
+        ctx->request_hash, sizeof(ctx->request_hash),
+        &pkt->b.nonce, cpkt_len - ASFT_TAG_LEN,
+        "asft-request-hash"
+    );
+    if (rv)
+        goto error;
+
     if (using_new_key) {
         _Static_assert(sizeof(ctx->ks.key) == sizeof(ctx->ks.new_key));
 
@@ -605,9 +621,18 @@ int asft_encrypt_resp(
     size_t pkt_len
 ) {
     int rv = 1;
+    struct ratchet_input ri = {0};
 
     uint32_t pn = be32toh(ctx->ks.pn);
     pkt->b.nonce = htobe32(pn);
+
+    rv = HKDF(
+        ri.response_hash, sizeof(ri.response_hash),
+        &pkt->b.nonce, pkt_len - ASFT_TAG_LEN,
+        "asft-response-hash"
+    );
+    if (rv)
+        goto error;
 
     struct asft_key key;
     rv = HKDF(
@@ -630,7 +655,7 @@ int asft_encrypt_resp(
     if (rv)
         goto error;
 
-    struct ratchet_input ri = {0};
+    memcpy(ri.request_hash, ctx->request_hash, sizeof(ri.request_hash));
     memcpy(ri.prev_key, ctx->ks.key, sizeof(ctx->ks.key));
     char ratchet_output[sizeof(ctx->ks.new_key)];
     rv = HKDF(
@@ -658,6 +683,7 @@ int asft_decrypt_resp(
     size_t cpkt_len
 ) {
     int rv = 1;
+    struct ratchet_input ri = {0};
 
     struct asft_key key;
     rv = HKDF(
@@ -687,8 +713,16 @@ int asft_decrypt_resp(
         goto error;
     }
 
-    struct ratchet_input ri = {0};
+    rv = HKDF(
+        ri.response_hash, sizeof(ri.response_hash),
+        &pkt->b.nonce, cpkt_len - ASFT_TAG_LEN,
+        "asft-response-hash"
+    );
+    if (rv)
+        goto error;
+
     memcpy(ri.prev_key, ctx->ks.key, sizeof(ctx->ks.key));
+    memcpy(ri.request_hash, ctx->request_hash, sizeof(ri.request_hash));
     char ratchet_output[sizeof(ctx->ks.key)];
     rv = HKDF(
         ratchet_output, sizeof(ratchet_output),
