@@ -83,6 +83,40 @@ error:
     return rv;
 }
 
+static int chacha20(
+    unsigned char *out,
+    unsigned char *in,
+    size_t len,
+    unsigned char *key,
+    unsigned char *iv
+)
+{
+    int rv = 1;
+    int tmplen;
+
+    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+    if (!ctx)
+        goto error;
+
+    if (EVP_EncryptInit_ex(ctx, EVP_chacha20(), NULL, key, iv) != 1)
+        goto error;
+
+    if (EVP_EncryptUpdate(ctx, out, &tmplen, in, len) != 1)
+        goto error;
+
+    if (EVP_EncryptFinal_ex(ctx, out + tmplen, &tmplen) != 1)
+        goto error;
+
+    rv = 0;
+
+error:
+
+    if (ctx)
+        EVP_CIPHER_CTX_free(ctx);
+
+    return rv;
+}
+
 static int keystore_load(
     struct keystore *ks,
     char *filename
@@ -275,7 +309,6 @@ static int chaSIV_encrypt(
     size_t N_len
 ) {
     int rv = -1;
-    int tmplen;
     unsigned char *M = pkt + ASFT_TAG_LEN + N_len;
     unsigned char *C = cpkt + ASFT_TAG_LEN + N_len;
     size_t M_len = pkt_len - ASFT_TAG_LEN - N_len;
@@ -309,29 +342,13 @@ static int chaSIV_encrypt(
         goto error;
     }
 
-    if (EVP_EncryptInit_ex(ctx, EVP_chacha20(), NULL, Ke, E_nonce) != 1)
+    if (chacha20(C, M, M_len, Ke, E_nonce))
         goto error;
 
-    if (EVP_EncryptUpdate(ctx, C, &tmplen, M, M_len) != 1)
+    // Additional step - nonce encryption
+    // Not a part of chaSIV
+    if (chacha20(Nc, N, N_len, key->enc_of_nonce, E_nonce))
         goto error;
-
-    if (EVP_EncryptFinal_ex(ctx, C + tmplen, &tmplen) != 1)
-        goto error;
-
-
-    {
-        // Additional step - nonce encryption
-        // Not a part of chaSIV
-
-        if (EVP_EncryptInit_ex(ctx, EVP_chacha20(), NULL, key->enc_of_nonce, E_nonce) != 1)
-            goto error;
-
-        if (EVP_EncryptUpdate(ctx, Nc, &tmplen, N, N_len) != 1)
-            goto error;
-
-        if (EVP_EncryptFinal_ex(ctx, Nc + tmplen, &tmplen) != 1)
-            goto error;
-    }
 
     rv = 0;
 
@@ -351,7 +368,6 @@ static int chaSIV_decrypt(
     size_t N_len
 ) {
     int rv = -1;
-    int tmplen;
     unsigned char *M = pkt + ASFT_TAG_LEN + N_len;
     unsigned char *C = cpkt + ASFT_TAG_LEN + N_len;
     size_t C_len = cpkt_len - ASFT_TAG_LEN - N_len;
@@ -374,19 +390,10 @@ static int chaSIV_decrypt(
     unsigned char E_nonce[CHACHA_CTR_SIZE] = {0};
     memcpy(E_nonce + 4, T, ASFT_TAG_LEN);
 
-    {
-        // Additional step - nonce decryption
-        // Not a part of chaSIV
-
-        if (EVP_DecryptInit_ex(ctx, EVP_chacha20(), NULL, key->enc_of_nonce, E_nonce) != 1)
-            goto error;
-
-        if (EVP_DecryptUpdate(ctx, N, &tmplen, Nc, N_len) != 1)
-            goto error;
-
-        if (EVP_DecryptFinal_ex(ctx, N + tmplen, &tmplen) != 1)
-            goto error;
-    }
+    // Additional step - nonce decryption
+    // Not a part of chaSIV
+    if (chacha20(N, Nc, N_len, key->enc_of_nonce, E_nonce))
+        goto error;
 
     unsigned char Ke[CHACHA_KEY_SIZE] = {0};
     if (chaSIV_F(Ke, K, N, N_len)) {
@@ -394,13 +401,7 @@ static int chaSIV_decrypt(
         goto error;
     }
 
-    if (EVP_DecryptInit_ex(ctx, EVP_chacha20(), NULL, Ke, E_nonce) != 1)
-        goto error;
-
-    if (EVP_DecryptUpdate(ctx, M, &tmplen, C, C_len) != 1)
-        goto error;
-
-    if (EVP_DecryptFinal_ex(ctx, M + tmplen, &tmplen) != 1)
+    if (chacha20(M, C, C_len, Ke, E_nonce))
         goto error;
 
     unsigned char T_local[ASFT_TAG_LEN];
