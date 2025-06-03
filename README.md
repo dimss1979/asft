@@ -7,7 +7,7 @@ Minimum line requirements are:
 
 * 8 bits (8N1)
 * Half-duplex. Full duplex is supported as well.
-* By default, maximum frame size is 118 bytes.
+* By default, maximum frame size is 120 bytes.
 
 Examples:
 
@@ -25,7 +25,7 @@ Nodes only respond to requests coming from gateway.
 Half-duplex nature and security make `asft` different from many other serial file transfer protocols.
 
 COBS framing is used.
-With default block and header size, maximum frame size is 118 bytes (including start and stop delimiters).
+With default block and header size, maximum frame size is 120 bytes (including start and stop delimiters).
 
 By default, `asft` will transfer files with size up to 1000000 bytes.
 File names beginning with a dot are ignored.
@@ -48,7 +48,7 @@ Prepend a whitespace to prevent saving a passphrase in the shell history.
 Keystore name is derived from peer label (see below).
 You better use long and random passphrases.
 
-*Each peer must have a unique encryption key.*
+**Each peer must have a unique encryption key.**
 
 On the gateway:
 
@@ -75,7 +75,32 @@ Note that there is no option to daemonize process - this is not required these d
 ./asft configuration_file.conf
 ```
 
-Sample configuration files for gateway and nodes are included. You need to create yourself directories for incoming and outgoing files. At the gateway:
+Sample configuration file for gateway:
+
+```
+debug 1
+mode gateway
+port /dev/ttyUSB0 1200
+retries 5
+retry_timeout 2
+pause_idle 10
+pause_error 10
+
+node node01
+#node node02
+#node node03
+```
+
+Sample configuration file for node01:
+
+```
+debug 1
+mode node
+port /dev/ttyUSB1 1200
+gateway gw
+```
+
+You need to create yourself directories for incoming and outgoing files. At the gateway:
 
 ```
 from_node01
@@ -167,7 +192,7 @@ In Debian, the user must be a member of "dialout" group.
 
 ### retries
 
-(gateway only) Packet transmission maximum retry count (1..10).
+(gateway only) Packet transmission maximum retry count.
 
 If exceeded, the node is moved to error state.
 
@@ -183,13 +208,10 @@ If exceeded, the packet will be retransmitted.
 
 When there are no files to be trasferred, the node is moved to idle state.
 The node leaves idle state and proceeds to upload when idle time is over or there is a file available for download.
-Note that the gateway cannot detect if the node has a new file for upload while it's idle.
 
 ### pause_error
 
 (gateway only) Stay in error state for specified amount of seconds.
-
-The node is moved to error state upon any error.
 
 ### node
 
@@ -212,7 +234,10 @@ You can specify multiple nodes for multipoint operation if transmission medium p
 
 (node only) Label for the gateway.
 
-Label is used for derivation of incoming and outgoing directory names.
+Label is used for:
+
+* derivation of incoming and outgoing directory names
+* keystore file name
 
 Directory names are in the form: `to_label`, `from_label`.
 Both directories must be created in advance in the working directory of `asft`.
@@ -231,6 +256,11 @@ If keystore file is stolen by a passive attacker:
 
 * No previous messages can be decrypted
 * Future messages can only be decrypted as long as an attacker can track all future messsages. Which is unlikely with unreliable radio channels.
+
+If keystore file is stolen by an active attacker:
+
+* The attacker can perform an active attack immediately
+* However, if an attacker has lost one or more messages before the attack, the current key is no longer known to them
 
 Only symmetric encryption is used.
 Should have some quantum computer attack resistance.
