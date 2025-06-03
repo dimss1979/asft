@@ -34,21 +34,39 @@ Other files are ignored.
 
 ## Build
 
-It does not have Makefile yet.
-
 ```
-gcc -o asft -Wall -Werror -std=gnu11 *.c -lcrypto
+./build.sh
 ```
 
-or
-
-```
-clang -o asft -Wall -Werror -std=gnu11 *.c -lcrypto
-```
-
+Adjust build script as needed.
 OpenSSL 3.x is required.
 
 ## Run
+
+First of all, create keystore with the initial key per peer.
+Prepend a whitespace to prevent saving a passphrase in the shell history.
+Keystore name is derived from peer label (see below).
+You better use long and random passphrases.
+
+*Each peer must have a unique encryption key.*
+
+On the gateway:
+
+```
+ ./asft_keygen keystore_node01 Passphrase_123_random_string
+ ./asft_keygen keystore_node02 Passphrase_234_random_string
+ ...
+```
+
+On the node01:
+
+```
+ ./asft_keygen keystore_gw     Passphrase_123_random_string
+```
+
+The keystore file must be readable and writable by `asft`.
+
+Next, run `asft` itself.
 
 You can run it manually or under supervision of `systemd` or `procd` if you wish.
 Note that there is no option to daemonize process - this is not required these days.
@@ -81,7 +99,7 @@ This is called "download".
 The opposite process of file transfer from node to gateway is called "upload".
 
 The user is advised to write their data to some temporary file in another directory.
-Note that dotfiles are ignored by `asft`.
+Dotfiles are ignored by `asft`.
 The same `to_label` directory can be used if your temporary file name is beginning with a dot.
 And then move/rename file or create a symlink in `to_label` directory.
 The file is ready for transfer.
@@ -94,15 +112,10 @@ In other words, the file moved first or symlink created first in `to_label` dire
 Gateway is the initiator of all packet exchange.
 It will interleave packets intended for all configured nodes in round robin manner.
 
-There are three packet types:
+There are two packet types:
 
-1. ECDH session key exchange
-2. Data
-3. No data
-
-Session key exchange is always performed whenever no session key is available yet or node is recovering from error or timeout.
-Data packets carry file fragments.
-Both data and no data packets carry file fragment acknowledgement flag.
+1. Long packets carrying file fragments and ACKs
+2. Short packets carrying only ACKs
 
 ## Node operation
 
@@ -111,17 +124,9 @@ It never initiates communication.
 
 ## File transfer
 
-Whenever gateway or node has found a file to transfer, it's read into memory and forms a "BLOB" together with metadata (file size and name).
-Then fragments of BLOB are transferred to the other party using data packets.
-The other party confirms fragment reception using the respective flag in return packets (data or no data).
-It's a sequential, bidirectional file transfer protocol.
+`asft` is based on a sequential, bidirectional file transfer protocol.
 
-When all the fragments are received:
-
-1. Recipient will verify BLOB MAC signature and save the respective file.
-2. Sender will free BLOB, unlink file and look for another file to transfer.
-
-Note that the context of file transfer is preserved across key exchanges and timeouts.
+The context of file transfer is preserved across timeouts.
 File transfer will resume after timeout as long as you keep "asft" process running at both ends.
 This is very helpful with slow communication channels.
 
@@ -134,13 +139,6 @@ Set to '1' for more verbose logging.
 ### mode
 
 Either 'gateway' or 'node'.
-
-### network
-
-Unique arbitrary string to be used as network name.
-Must be the same on gateway and all its nodes.
-
-This option prevents unexpected communication between hosts of different networks if their transmission medium is the same and they use the same password by coincidence.
 
 ### port
 
@@ -192,53 +190,47 @@ Note that the gateway cannot detect if the node has a new file for upload while 
 (gateway only) Stay in error state for specified amount of seconds.
 
 The node is moved to error state upon any error.
-When this time is over, the node will proceed to session key exchange.
 
 ### node
 
-(gateway only) Label and password for node.
+(gateway only) Label for a peer node.
 
 Label is used for:
 
 * derivation of incoming and outgoing directory names
 * log messages corresponding to particular node
+* keystore file name
 
-So you better use unique labels to prevent confusion.
+You have to use unique labels to prevent confusion.
 
 Directory names are in the form: `to_label`, `from_label`.
 Both directories must be created in advance in the working directory of `asft`.
-
-Password is used to derive an initial encryption key for the node.
-As there is no other means to address particular node, its password *must* be unique.
-You're advised to use long random string as a password.
 
 You can specify multiple nodes for multipoint operation if transmission medium permits.
 
 ### gateway
 
-(node only) Label and password for gateway.
+(node only) Label for the gateway.
 
 Label is used for derivation of incoming and outgoing directory names.
 
 Directory names are in the form: `to_label`, `from_label`.
 Both directories must be created in advance in the working directory of `asft`.
 
-Password must be configured the same on gateway and corresponding node.
-As there is no other means to address particular node, its password *must* be unique.
-You're advised to use long random string as a password.
-
 ## Security
 
-Each node is addressed by its encryption key.
-The gateway and all its nodes share a common network name.
-All keys are derived using HKDF(BLAKE2b).
-Network name is used as a salt.
-Initial key is derived from node password.
-Session key is derived from "X25519" ECDH shared secret.
-
-Each packet is encrypted and authenticated using chaSIV(chacha20, BLAKE2s).
-Additionally, its nonce is encrypted using plain "chacha20".
-This way, the entire packet is random-looking.
+Each node is addressed by its encryption key only.
+Each transmitted packet is encrypted and authenticated, fully random-looking.
 No inormation is exposed besides packet length and transmission time.
 
-Gateway and nodes must keep their system clocks synchronized within 3600 seconds.
+The initial key is set using `asft_keygen`.
+Then, the key is renewed using so-called "key ratchet" with every packet roundtrip.
+The contents of transmitted messages is used as an additional entropy source for key renewal.
+
+If keystore file is stolen by a passive attacker:
+
+* No previous messages can be decrypted
+* Future messages can only be decrypted as long as an attacker can track all future messsages. Which is unlikely with unreliable radio channels.
+
+Only symmetric encryption is used.
+Should have some quantum computer attack resistance.
