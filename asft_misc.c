@@ -67,3 +67,12 @@ uint64_t asft_now()
 
     return now.tv_sec * 1000ULL + now.tv_nsec / 1000000ULL;
 }
+
+uint64_t asft_timestamp()
+{
+    struct timespec now;
+
+    clock_gettime(CLOCK_REALTIME, &now);
+
+    return now.tv_sec * 1000ULL + now.tv_nsec / 1000000ULL;
+}

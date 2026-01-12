@@ -39,6 +39,7 @@ struct asft_crypto_ctx {
     char *keystore_filename;
     struct keystore ks;
     char request_hash[64];
+    uint64_t timestamp;
 };
 
 struct ratchet_input {
@@ -444,6 +445,8 @@ struct asft_crypto_ctx *asft_crypto_ctx_init(char *peer_label)
         goto error;
     }
 
+    ctx->timestamp = asft_timestamp();
+
     return ctx;
 
 error:
@@ -487,12 +490,17 @@ int asft_encrypt_req(
 ) {
     int rv = 1;
 
-    uint32_t pn = be32toh(ctx->ks.pn) + 1;
-    pkt->b.nonce = htobe32(pn);
+    ctx->timestamp = asft_timestamp();
+    pkt->b.timestamp[0] = ctx->timestamp >> 40;
+    pkt->b.timestamp[1] = ctx->timestamp >> 32;
+    pkt->b.timestamp[2] = ctx->timestamp >> 24;
+    pkt->b.timestamp[3] = ctx->timestamp >> 16;
+    pkt->b.timestamp[4] = ctx->timestamp >> 8;
+    pkt->b.timestamp[5] = ctx->timestamp >> 0;
 
     rv = HKDF(
         ctx->request_hash, sizeof(ctx->request_hash),
-        &pkt->b.nonce, pkt_len - ASFT_TAG_LEN,
+        &pkt->b.timestamp, pkt_len - ASFT_TAG_LEN,
         "asft-request-hash"
     );
     if (rv)
@@ -515,12 +523,10 @@ int asft_encrypt_req(
     if (rv)
         goto error;
 
-    rv = chaSIV_encrypt(cpkt, pkt, pkt_len, &key, sizeof(pkt->b.nonce));
+    rv = chaSIV_encrypt(cpkt, pkt, pkt_len, &key, sizeof(pkt->b.timestamp));
     if (rv)
         goto error;
 
-    ctx->ks.pn = htobe32(pn);
-    keystore_save(&ctx->ks, ctx->keystore_filename);
     rv = 0;
 
 error:
@@ -554,7 +560,7 @@ int asft_decrypt_req(
     if (rv)
         goto error;
 
-    rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, &key, sizeof(pkt->b.nonce));
+    rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, &key, sizeof(pkt->b.timestamp));
 
     if (rv && ctx->ks.have_new_key) {
         rv = HKDF(
@@ -573,7 +579,7 @@ int asft_decrypt_req(
         if (rv)
             goto error;
 
-        rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, &key, sizeof(pkt->b.nonce));
+        rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, &key, sizeof(pkt->b.timestamp));
         if (rv)
             goto error;
 
@@ -583,16 +589,22 @@ int asft_decrypt_req(
     if (rv)
         goto error;
 
-    uint32_t pn_prev = be32toh(ctx->ks.pn);
-    uint32_t pn_new = be32toh(pkt->b.nonce);
-    if (!using_new_key && pn_new <= pn_prev) {
+    uint64_t timestamp_new =
+        (uint64_t) pkt->b.timestamp[0] << 40 |
+        (uint64_t) pkt->b.timestamp[1] << 32 |
+        (uint64_t) pkt->b.timestamp[2] << 24 |
+        (uint64_t) pkt->b.timestamp[3] << 16 |
+        (uint64_t) pkt->b.timestamp[4] << 8  |
+        (uint64_t) pkt->b.timestamp[5] << 0;
+
+    if (timestamp_new <= ctx->timestamp) {
         asft_error("Replay detected %s\n", ctx->keystore_filename);
         goto error;
     }
 
     rv = HKDF(
         ctx->request_hash, sizeof(ctx->request_hash),
-        &pkt->b.nonce, cpkt_len - ASFT_TAG_LEN,
+        &pkt->b.timestamp, cpkt_len - ASFT_TAG_LEN,
         "asft-request-hash"
     );
     if (rv)
@@ -605,7 +617,7 @@ int asft_decrypt_req(
         memset(ctx->ks.new_key, 0, sizeof(ctx->ks.new_key));
         ctx->ks.have_new_key = 0;
     }
-    ctx->ks.pn = htobe32(pn_new);
+    ctx->timestamp = timestamp_new;
     keystore_save(&ctx->ks, ctx->keystore_filename);
     rv = 0;
 
@@ -623,12 +635,16 @@ int asft_encrypt_resp(
     int rv = 1;
     struct ratchet_input ri = {0};
 
-    uint32_t pn = be32toh(ctx->ks.pn);
-    pkt->b.nonce = htobe32(pn);
+    pkt->b.timestamp[0] = ctx->timestamp >> 40;
+    pkt->b.timestamp[1] = ctx->timestamp >> 32;
+    pkt->b.timestamp[2] = ctx->timestamp >> 24;
+    pkt->b.timestamp[3] = ctx->timestamp >> 16;
+    pkt->b.timestamp[4] = ctx->timestamp >> 8;
+    pkt->b.timestamp[5] = ctx->timestamp >> 0;
 
     rv = HKDF(
         ri.response_hash, sizeof(ri.response_hash),
-        &pkt->b.nonce, pkt_len - ASFT_TAG_LEN,
+        &pkt->b.timestamp, pkt_len - ASFT_TAG_LEN,
         "asft-response-hash"
     );
     if (rv)
@@ -651,7 +667,7 @@ int asft_encrypt_resp(
     if (rv)
         goto error;
 
-    rv = chaSIV_encrypt(cpkt, pkt, pkt_len, &key, sizeof(pkt->b.nonce));
+    rv = chaSIV_encrypt(cpkt, pkt, pkt_len, &key, sizeof(pkt->b.timestamp));
     if (rv)
         goto error;
 
@@ -702,20 +718,26 @@ int asft_decrypt_resp(
     if (rv)
         goto error;
 
-    rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, &key, sizeof(pkt->b.nonce));
+    rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, &key, sizeof(pkt->b.timestamp));
     if (rv)
         goto error;
 
-    uint32_t pn_prev = be32toh(ctx->ks.pn);
-    uint32_t pn_new = be32toh(pkt->b.nonce);
-    if (pn_new != pn_prev) {
+    uint64_t timestamp_new =
+        (uint64_t) pkt->b.timestamp[0] << 40 |
+        (uint64_t) pkt->b.timestamp[1] << 32 |
+        (uint64_t) pkt->b.timestamp[2] << 24 |
+        (uint64_t) pkt->b.timestamp[3] << 16 |
+        (uint64_t) pkt->b.timestamp[4] << 8  |
+        (uint64_t) pkt->b.timestamp[5] << 0;
+
+    if (timestamp_new != ctx->timestamp) {
         asft_error("Replay detected %s\n", ctx->keystore_filename);
         goto error;
     }
 
     rv = HKDF(
         ri.response_hash, sizeof(ri.response_hash),
-        &pkt->b.nonce, cpkt_len - ASFT_TAG_LEN,
+        &pkt->b.timestamp, cpkt_len - ASFT_TAG_LEN,
         "asft-response-hash"
     );
     if (rv)
