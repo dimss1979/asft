@@ -244,7 +244,7 @@ int asft_gateway_loop()
     return 0;
 }
 
-int asft_gateway_add_node(char *label)
+int asft_gateway_add_node(char *label, char *password)
 {
     struct node *new = NULL;
 
@@ -262,7 +262,7 @@ int asft_gateway_add_node(char *label)
     if (!new->label)
         goto error;
 
-    new->crypto_ctx = asft_crypto_ctx_init(label);
+    new->crypto_ctx = asft_crypto_ctx_init(password);
     if (!new->crypto_ctx)
         goto error;
 

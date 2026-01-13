@@ -7,7 +7,7 @@ Minimum line requirements are:
 
 * 8 bits (8N1)
 * Half-duplex. Full duplex is supported as well.
-* By default, maximum frame size is 120 bytes.
+* By default, maximum frame size is 122 bytes.
 
 Examples:
 
@@ -43,30 +43,12 @@ OpenSSL 3.x is required.
 
 ## Run
 
-First of all, create keystore with the initial key per peer.
-Prepend a whitespace to prevent saving a passphrase in the shell history.
-Keystore name is derived from peer label (see below).
-You better use long and random passphrases.
+First of all, create configuration file.
+You better use long and random passwords.
 
-**Each peer must have a unique encryption key.**
+**Each peer must have a unique password.**
 
-On the gateway:
-
-```
- ./asft_keygen keystore_node01 Passphrase_123_random_string
- ./asft_keygen keystore_node02 Passphrase_234_random_string
- ...
-```
-
-On the node01:
-
-```
- ./asft_keygen keystore_gw     Passphrase_123_random_string
-```
-
-The keystore file must be readable and writable by `asft`.
-
-Next, run `asft` itself.
+Next, run `asft`.
 
 You can run it manually or under supervision of `systemd` or `procd` if you wish.
 Note that there is no option to daemonize process - this is not required these days.
@@ -86,9 +68,9 @@ retry_timeout 2
 pause_idle 10
 pause_error 10
 
-node node01
-#node node02
-#node node03
+node node01 password123
+#node node02 password234
+#node node03 password345
 ```
 
 Sample configuration file for node01:
@@ -97,7 +79,7 @@ Sample configuration file for node01:
 debug 1
 mode node
 port /dev/ttyUSB1 1200
-gateway gw
+gateway gw password123
 ```
 
 You need to create yourself directories for incoming and outgoing files. At the gateway:
@@ -215,13 +197,12 @@ The node leaves idle state and proceeds to upload when idle time is over or ther
 
 ### node
 
-(gateway only) Label for a peer node.
+(gateway only) Label and password for a peer node.
 
 Label is used for:
 
 * derivation of incoming and outgoing directory names
 * log messages corresponding to particular node
-* keystore file name
 
 You have to use unique labels to prevent confusion.
 
@@ -232,35 +213,23 @@ You can specify multiple nodes for multipoint operation if transmission medium p
 
 ### gateway
 
-(node only) Label for the gateway.
+(node only) Label and password for the gateway.
 
 Label is used for:
 
 * derivation of incoming and outgoing directory names
-* keystore file name
 
 Directory names are in the form: `to_label`, `from_label`.
 Both directories must be created in advance in the working directory of `asft`.
 
 ## Security
 
-Each node is addressed by its encryption key only.
+Each node is addressed by its password only.
 Each transmitted packet is encrypted and authenticated, fully random-looking.
-No inormation is exposed besides packet length and transmission time.
-
-The initial key is set using `asft_keygen`.
-Then, the key is renewed using so-called "key ratchet" with every packet roundtrip.
-The contents of transmitted messages is used as an additional entropy source for key renewal.
-
-If keystore file is stolen by a passive attacker:
-
-* No previous messages can be decrypted
-* Future messages can only be decrypted as long as an attacker can track all future messsages. Which is unlikely with unreliable radio channels.
-
-If keystore file is stolen by an active attacker:
-
-* The attacker can perform an active attack immediately
-* However, if an attacker has lost one or more messages before the attack, the current key is no longer known to them
+No information is exposed besides packet length and transmission time.
+Only basic encryption, authentication and replay protection is implemented.
+No PFS, no PCS at the moment.
+Gateway and node must maintain clock synchronization within a few seconds.
 
 Only symmetric encryption is used.
 Should have some quantum computer attack resistance.

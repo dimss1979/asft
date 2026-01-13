@@ -5,13 +5,7 @@
 
 struct asft_crypto_ctx;
 
-struct asft_crypto_ctx *asft_crypto_ctx_init(char *peer_label);
-
-int asft_set_key(
-    char *filename,
-    char *keymat,
-    size_t keymat_len
-);
+struct asft_crypto_ctx *asft_crypto_ctx_init(char *password);
 
 int asft_encrypt_req(
     struct asft_crypto_ctx *ctx,

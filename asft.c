@@ -118,7 +118,12 @@ static int read_config_file(char *filename)
                 asft_error("Node label not specified on line %i\n", line_number);
                 goto error;
             }
-            if (asft_gateway_add_node(label)) {
+            char *password = strtok(NULL, delimiters);
+            if (!password) {
+                asft_error("Node password not specified on line %i\n", line_number);
+                goto error;
+            }
+            if (asft_gateway_add_node(label, password)) {
                 asft_error("Cannot add node on line %i\n", line_number);
                 goto error;
             }
@@ -128,7 +133,12 @@ static int read_config_file(char *filename)
                 asft_error("Gateway label not specified on line %i\n", line_number);
                 goto error;
             }
-            if (asft_node_set_gateway(label)) {
+            char *password = strtok(NULL, delimiters);
+            if (!password) {
+                asft_error("Gateway password not specified on line %i\n", line_number);
+                goto error;
+            }
+            if (asft_node_set_gateway(label, password)) {
                 asft_error("Cannot set gateway on line %i\n", line_number);
                 goto error;
             }

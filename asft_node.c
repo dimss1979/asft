@@ -39,7 +39,6 @@ static int gateway_init()
     if (asprintf(&gw.download_dir, "from_%s", gw.label) < 0)
         goto error;
 
-    gw.crypto_ctx = asft_crypto_ctx_init(gw.label);
     if (!gw.crypto_ctx)
         goto error;
 
@@ -129,7 +128,7 @@ int asft_node_loop()
     }
 }
 
-int asft_node_set_gateway(char *label)
+int asft_node_set_gateway(char *label, char *password)
 {
     if (strchr(label, '/')) {
         asft_error("Invalid label - contains slash\n");
@@ -139,8 +138,9 @@ int asft_node_set_gateway(char *label)
     free(gw.label);
 
     gw.label = strdup(label);
+    gw.crypto_ctx = asft_crypto_ctx_init(password);
 
-    if (!gw.label)
+    if (!gw.crypto_ctx || !gw.label)
         goto error;
 
     return 0;

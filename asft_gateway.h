@@ -2,7 +2,7 @@
 #define _ASFT_GATEWAY_H_
 
 int asft_gateway_loop(void);
-int asft_gateway_add_node(char *label);
+int asft_gateway_add_node(char *label, char *password);
 void asft_gateway_set_retries(int new_retries);
 void asft_gateway_set_retry_timeout(int new_timeout);
 void asft_gateway_set_pause_idle(int new_pause_idle);

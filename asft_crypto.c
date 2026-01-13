@@ -28,25 +28,10 @@ struct asft_key {
     unsigned char enc_of_nonce[CHACHA_KEY_SIZE];
 };
 
-struct keystore {
-    uint32_t pn;
-    uint8_t have_new_key;
-    uint8_t new_key[64];
-    uint8_t key[64];
-} __attribute__((packed));
-
 struct asft_crypto_ctx {
-    char *keystore_filename;
-    struct keystore ks;
-    char request_hash[64];
     uint64_t timestamp;
+    uint8_t master_key[64];
 };
-
-struct ratchet_input {
-    char request_hash[64];
-    char response_hash[64];
-    char prev_key[64];
-} __attribute__((packed));
 
 static int HKDF(
     void *key,
@@ -121,71 +106,6 @@ error:
 
     if (ctx)
         EVP_CIPHER_CTX_free(ctx);
-
-    return rv;
-}
-
-static int keystore_load(
-    struct keystore *ks,
-    char *filename
-) {
-    int rv = 1;
-    FILE *f;
-
-    f = fopen(filename, "r");
-
-    if (!f)
-        goto error;
-
-    if (fread(ks, sizeof(*ks), 1, f) != 1)
-        goto error;
-
-    if (fclose(f))
-        goto error;
-
-    f = NULL;
-    rv = 0;
-
-error:
-
-    if (f)
-        fclose(f);
-
-    return rv;
-}
-
-static int keystore_save(
-    struct keystore *ks,
-    char *filename
-) {
-    int rv = 1;
-    FILE *f;
-    char tmpfile[PATH_MAX + 1];
-
-    snprintf(tmpfile, sizeof(tmpfile), "%s.tmp", filename);
-    f = fopen(tmpfile, "w");
-
-    if (!f)
-        goto error;
-
-    if (fwrite(ks, sizeof(*ks), 1, f) != 1)
-        goto error;
-
-    if (fclose(f))
-        goto error;
-
-    f = NULL;
-
-    if (rename(tmpfile, filename))
-        goto error;
-
-    sync();
-    rv = 0;
-
-error:
-
-    if (f)
-        fclose(f);
 
     return rv;
 }
@@ -431,55 +351,30 @@ error:
     return rv;
 }
 
-struct asft_crypto_ctx *asft_crypto_ctx_init(char *peer_label)
+struct asft_crypto_ctx *asft_crypto_ctx_init(char *password)
 {
     struct asft_crypto_ctx *ctx;
 
     ctx = malloc(sizeof(*ctx));
     assert(ctx);
     memset(ctx, 0, sizeof(*ctx));
-    int rv = asprintf(&ctx->keystore_filename, "keystore_%s", peer_label);
-    assert(rv > 0);
-    if (keystore_load(&ctx->ks, ctx->keystore_filename)) {
-        asft_error("Failed to load keystore %s\n", ctx->keystore_filename);
-        goto error;
-    }
 
     ctx->timestamp = asft_timestamp();
+    int rv = HKDF(
+        ctx->master_key, sizeof(ctx->master_key),
+        password, strlen(password),
+        "master-key"
+    );
+    if (rv)
+        goto error;
 
     return ctx;
 
 error:
 
-    free(ctx->keystore_filename);
     free(ctx);
 
     return NULL;
-}
-
-int asft_set_key(
-    char *filename,
-    char *keymat,
-    size_t keymat_len
-) {
-    int rv = 0;
-    struct keystore ks = {0};
-
-    rv = HKDF(
-        ks.key,
-        sizeof(ks.key),
-        keymat,
-        keymat_len,
-        "asft-initial-key"
-    );
-    if (rv)
-        goto error;
-
-    rv = keystore_save(&ks, filename);
-
-error:
-
-    return rv;
 }
 
 int asft_encrypt_req(
@@ -498,18 +393,11 @@ int asft_encrypt_req(
     pkt->b.timestamp[4] = ctx->timestamp >> 8;
     pkt->b.timestamp[5] = ctx->timestamp >> 0;
 
-    rv = HKDF(
-        ctx->request_hash, sizeof(ctx->request_hash),
-        &pkt->b.timestamp, pkt_len - ASFT_TAG_LEN,
-        "asft-request-hash"
-    );
-    if (rv)
-        goto error;
-
     struct asft_key key;
+
     rv = HKDF(
         key.enc, sizeof(key.enc),
-        ctx->ks.key, sizeof(ctx->ks.key),
+        ctx->master_key, sizeof(ctx->master_key),
         "asft-request-key"
     );
     if (rv)
@@ -517,7 +405,7 @@ int asft_encrypt_req(
 
     rv = HKDF(
         key.enc_of_nonce, sizeof(key.enc_of_nonce),
-        ctx->ks.key, sizeof(ctx->ks.key),
+        ctx->master_key, sizeof(ctx->master_key),
         "asft-request-key-for-nonce"
     );
     if (rv)
@@ -541,12 +429,11 @@ int asft_decrypt_req(
     size_t cpkt_len
 ) {
     int rv = 1;
-    bool using_new_key = false;
     struct asft_key key;
 
     rv = HKDF(
         key.enc, sizeof(key.enc),
-        ctx->ks.key, sizeof(ctx->ks.key),
+        ctx->master_key, sizeof(ctx->master_key),
         "asft-request-key"
     );
     if (rv)
@@ -554,38 +441,13 @@ int asft_decrypt_req(
 
     rv = HKDF(
         key.enc_of_nonce, sizeof(key.enc_of_nonce),
-        ctx->ks.key, sizeof(ctx->ks.key),
+        ctx->master_key, sizeof(ctx->master_key),
         "asft-request-key-for-nonce"
     );
     if (rv)
         goto error;
 
     rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, &key, sizeof(pkt->b.timestamp));
-
-    if (rv && ctx->ks.have_new_key) {
-        rv = HKDF(
-            key.enc, sizeof(key.enc),
-            ctx->ks.new_key, sizeof(ctx->ks.new_key),
-            "asft-request-key"
-        );
-        if (rv)
-            goto error;
-
-        rv = HKDF(
-            key.enc_of_nonce, sizeof(key.enc_of_nonce),
-            ctx->ks.new_key, sizeof(ctx->ks.new_key),
-            "asft-request-key-for-nonce"
-        );
-        if (rv)
-            goto error;
-
-        rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, &key, sizeof(pkt->b.timestamp));
-        if (rv)
-            goto error;
-
-        using_new_key = true;
-    }
-
     if (rv)
         goto error;
 
@@ -598,27 +460,11 @@ int asft_decrypt_req(
         (uint64_t) pkt->b.timestamp[5] << 0;
 
     if (timestamp_new <= ctx->timestamp) {
-        asft_error("Replay detected %s\n", ctx->keystore_filename);
+        asft_error("Replay detected\n");
         goto error;
     }
 
-    rv = HKDF(
-        ctx->request_hash, sizeof(ctx->request_hash),
-        &pkt->b.timestamp, cpkt_len - ASFT_TAG_LEN,
-        "asft-request-hash"
-    );
-    if (rv)
-        goto error;
-
-    if (using_new_key) {
-        _Static_assert(sizeof(ctx->ks.key) == sizeof(ctx->ks.new_key));
-
-        memcpy(ctx->ks.key, ctx->ks.new_key, sizeof(ctx->ks.key));
-        memset(ctx->ks.new_key, 0, sizeof(ctx->ks.new_key));
-        ctx->ks.have_new_key = 0;
-    }
     ctx->timestamp = timestamp_new;
-    keystore_save(&ctx->ks, ctx->keystore_filename);
     rv = 0;
 
 error:
@@ -633,7 +479,6 @@ int asft_encrypt_resp(
     size_t pkt_len
 ) {
     int rv = 1;
-    struct ratchet_input ri = {0};
 
     pkt->b.timestamp[0] = ctx->timestamp >> 40;
     pkt->b.timestamp[1] = ctx->timestamp >> 32;
@@ -642,18 +487,11 @@ int asft_encrypt_resp(
     pkt->b.timestamp[4] = ctx->timestamp >> 8;
     pkt->b.timestamp[5] = ctx->timestamp >> 0;
 
-    rv = HKDF(
-        ri.response_hash, sizeof(ri.response_hash),
-        &pkt->b.timestamp, pkt_len - ASFT_TAG_LEN,
-        "asft-response-hash"
-    );
-    if (rv)
-        goto error;
-
     struct asft_key key;
+
     rv = HKDF(
         key.enc, sizeof(key.enc),
-        ctx->ks.key, sizeof(ctx->ks.key),
+        ctx->master_key, sizeof(ctx->master_key),
         "asft-response-key"
     );
     if (rv)
@@ -661,7 +499,7 @@ int asft_encrypt_resp(
 
     rv = HKDF(
         key.enc_of_nonce, sizeof(key.enc_of_nonce),
-        ctx->ks.key, sizeof(ctx->ks.key),
+        ctx->master_key, sizeof(ctx->master_key),
         "asft-response-key-for-nonce"
     );
     if (rv)
@@ -671,20 +509,6 @@ int asft_encrypt_resp(
     if (rv)
         goto error;
 
-    memcpy(ri.request_hash, ctx->request_hash, sizeof(ri.request_hash));
-    memcpy(ri.prev_key, ctx->ks.key, sizeof(ctx->ks.key));
-    char ratchet_output[sizeof(ctx->ks.new_key)];
-    rv = HKDF(
-        ratchet_output, sizeof(ratchet_output),
-        &ri, sizeof(ri),
-        "asft-ratchet"
-    );
-    if (rv)
-        goto error;
-
-    memcpy(ctx->ks.new_key, ratchet_output, sizeof(ratchet_output));
-    ctx->ks.have_new_key = 1;
-    keystore_save(&ctx->ks, ctx->keystore_filename);
     rv = 0;
 
 error:
@@ -699,12 +523,12 @@ int asft_decrypt_resp(
     size_t cpkt_len
 ) {
     int rv = 1;
-    struct ratchet_input ri = {0};
 
     struct asft_key key;
+
     rv = HKDF(
         key.enc, sizeof(key.enc),
-        ctx->ks.key, sizeof(ctx->ks.key),
+        ctx->master_key, sizeof(ctx->master_key),
         "asft-response-key"
     );
     if (rv)
@@ -712,7 +536,7 @@ int asft_decrypt_resp(
 
     rv = HKDF(
         key.enc_of_nonce, sizeof(key.enc_of_nonce),
-        ctx->ks.key, sizeof(ctx->ks.key),
+        ctx->master_key, sizeof(ctx->master_key),
         "asft-response-key-for-nonce"
     );
     if (rv)
@@ -731,31 +555,10 @@ int asft_decrypt_resp(
         (uint64_t) pkt->b.timestamp[5] << 0;
 
     if (timestamp_new != ctx->timestamp) {
-        asft_error("Replay detected %s\n", ctx->keystore_filename);
+        asft_error("Replay detected\n");
         goto error;
     }
 
-    rv = HKDF(
-        ri.response_hash, sizeof(ri.response_hash),
-        &pkt->b.timestamp, cpkt_len - ASFT_TAG_LEN,
-        "asft-response-hash"
-    );
-    if (rv)
-        goto error;
-
-    memcpy(ri.prev_key, ctx->ks.key, sizeof(ctx->ks.key));
-    memcpy(ri.request_hash, ctx->request_hash, sizeof(ri.request_hash));
-    char ratchet_output[sizeof(ctx->ks.key)];
-    rv = HKDF(
-        ratchet_output, sizeof(ratchet_output),
-        &ri, sizeof(ri),
-        "asft-ratchet"
-    );
-    if (rv)
-        goto error;
-
-    memcpy(ctx->ks.key, ratchet_output, sizeof(ratchet_output));
-    keystore_save(&ctx->ks, ctx->keystore_filename);
     rv = 0;
 
 error:
