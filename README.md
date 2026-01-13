@@ -7,7 +7,7 @@ Minimum line requirements are:
 
 * 8 bits (8N1)
 * Half-duplex. Full duplex is supported as well.
-* By default, maximum frame size is 122 bytes.
+* By default, maximum frame size is 118 bytes.
 
 Examples:
 

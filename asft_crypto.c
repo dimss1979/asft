@@ -33,6 +33,11 @@ struct asft_crypto_ctx {
     uint8_t master_key[64];
 };
 
+union ts {
+    uint64_t be;
+    uint8_t bytes[8];
+};
+
 static int HKDF(
     void *key,
     size_t key_len,
@@ -116,7 +121,9 @@ static int chaSIV_H(
     unsigned char *N,
     size_t N_len,
     unsigned char *M,
-    size_t M_len
+    size_t M_len,
+    unsigned char *AD,
+    size_t AD_len
 )
 {
     int rv = -1;
@@ -150,6 +157,10 @@ static int chaSIV_H(
         goto error;
     }
     if (EVP_DigestUpdate(mdctx, M, M_len) != 1) {
+        asft_error("Cannot update digest\n");
+        goto error;
+    }
+    if (EVP_DigestUpdate(mdctx, AD, AD_len) != 1) {
         asft_error("Cannot update digest\n");
         goto error;
     }
@@ -234,7 +245,9 @@ static int chaSIV_encrypt(
     void *pkt,
     size_t pkt_len,
     struct asft_key *key,
-    size_t N_len
+    size_t N_len,
+    void *AD,
+    size_t AD_len
 ) {
     int rv = -1;
     unsigned char *M = pkt + ASFT_TAG_LEN + N_len;
@@ -250,7 +263,7 @@ static int chaSIV_encrypt(
     if (M_len < 1)
         goto error;
 
-    if (chaSIV_H(T, K, N, N_len, M, M_len)) {
+    if (chaSIV_H(T, K, N, N_len, M, M_len, AD, AD_len)) {
         asft_error("Encryption H() failed\n");
         goto error;
     }
@@ -293,7 +306,9 @@ static int chaSIV_decrypt(
     void *cpkt,
     size_t cpkt_len,
     struct asft_key *key,
-    size_t N_len
+    size_t N_len,
+    void *AD,
+    size_t AD_len
 ) {
     int rv = -1;
     unsigned char *M = pkt + ASFT_TAG_LEN + N_len;
@@ -333,7 +348,7 @@ static int chaSIV_decrypt(
         goto error;
 
     unsigned char T_local[ASFT_TAG_LEN];
-    if (chaSIV_H(T_local, K, N, N_len, M, C_len)) {
+    if (chaSIV_H(T_local, K, N, N_len, M, C_len, AD, AD_len)) {
         asft_error("Decryption H() failed\n");
         goto error;
     }
@@ -385,13 +400,10 @@ int asft_encrypt_req(
 ) {
     int rv = 1;
 
+    union ts t;
     ctx->timestamp = asft_timestamp();
-    pkt->b.timestamp[0] = ctx->timestamp >> 40;
-    pkt->b.timestamp[1] = ctx->timestamp >> 32;
-    pkt->b.timestamp[2] = ctx->timestamp >> 24;
-    pkt->b.timestamp[3] = ctx->timestamp >> 16;
-    pkt->b.timestamp[4] = ctx->timestamp >> 8;
-    pkt->b.timestamp[5] = ctx->timestamp >> 0;
+    t.be = htobe64(ctx->timestamp);
+    memcpy(pkt->b.timestamp, &t.bytes[ASFT_TS_HIDE], ASFT_TS_LEN);
 
     struct asft_key key;
 
@@ -411,7 +423,7 @@ int asft_encrypt_req(
     if (rv)
         goto error;
 
-    rv = chaSIV_encrypt(cpkt, pkt, pkt_len, &key, sizeof(pkt->b.timestamp));
+    rv = chaSIV_encrypt(cpkt, pkt, pkt_len, &key, sizeof(pkt->b.timestamp), t.bytes, ASFT_TS_HIDE);
     if (rv)
         goto error;
 
@@ -447,20 +459,36 @@ int asft_decrypt_req(
     if (rv)
         goto error;
 
-    rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, &key, sizeof(pkt->b.timestamp));
-    if (rv)
-        goto error;
+    union ts t;
+    t.be = htobe64(asft_timestamp());
 
-    uint64_t timestamp_new =
-        (uint64_t) pkt->b.timestamp[0] << 40 |
-        (uint64_t) pkt->b.timestamp[1] << 32 |
-        (uint64_t) pkt->b.timestamp[2] << 24 |
-        (uint64_t) pkt->b.timestamp[3] << 16 |
-        (uint64_t) pkt->b.timestamp[4] << 8  |
-        (uint64_t) pkt->b.timestamp[5] << 0;
+    rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, &key, sizeof(pkt->b.timestamp), t.bytes, ASFT_TS_HIDE);
+    if (!rv)
+        goto decrypted;
+
+    t.be = htobe64(asft_timestamp() - (1ULL << (ASFT_TS_LEN * 8)));
+
+    rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, &key, sizeof(pkt->b.timestamp), t.bytes, ASFT_TS_HIDE);
+    if (!rv)
+        goto decrypted;
+
+    t.be = htobe64(asft_timestamp() + (1ULL << (ASFT_TS_LEN * 8)));
+
+    rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, &key, sizeof(pkt->b.timestamp), t.bytes, ASFT_TS_HIDE);
+    if (!rv)
+        goto decrypted;
+
+    rv = 1;
+    goto error;
+
+decrypted:
+
+    memcpy(&t.bytes[ASFT_TS_HIDE], pkt->b.timestamp, ASFT_TS_LEN);
+    uint64_t timestamp_new = be64toh(t.be);
 
     if (timestamp_new <= ctx->timestamp) {
         asft_error("Replay detected\n");
+        rv = 1;
         goto error;
     }
 
@@ -480,12 +508,9 @@ int asft_encrypt_resp(
 ) {
     int rv = 1;
 
-    pkt->b.timestamp[0] = ctx->timestamp >> 40;
-    pkt->b.timestamp[1] = ctx->timestamp >> 32;
-    pkt->b.timestamp[2] = ctx->timestamp >> 24;
-    pkt->b.timestamp[3] = ctx->timestamp >> 16;
-    pkt->b.timestamp[4] = ctx->timestamp >> 8;
-    pkt->b.timestamp[5] = ctx->timestamp >> 0;
+    union ts t;
+    t.be = htobe64(ctx->timestamp);
+    memcpy(pkt->b.timestamp, &t.bytes[ASFT_TS_HIDE], ASFT_TS_LEN);
 
     struct asft_key key;
 
@@ -505,7 +530,7 @@ int asft_encrypt_resp(
     if (rv)
         goto error;
 
-    rv = chaSIV_encrypt(cpkt, pkt, pkt_len, &key, sizeof(pkt->b.timestamp));
+    rv = chaSIV_encrypt(cpkt, pkt, pkt_len, &key, sizeof(pkt->b.timestamp), t.bytes, ASFT_TS_HIDE);
     if (rv)
         goto error;
 
@@ -542,20 +567,19 @@ int asft_decrypt_resp(
     if (rv)
         goto error;
 
-    rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, &key, sizeof(pkt->b.timestamp));
+    union ts t;
+    t.be = htobe64(ctx->timestamp);
+
+    rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, &key, sizeof(pkt->b.timestamp), t.bytes, ASFT_TS_HIDE);
     if (rv)
         goto error;
 
-    uint64_t timestamp_new =
-        (uint64_t) pkt->b.timestamp[0] << 40 |
-        (uint64_t) pkt->b.timestamp[1] << 32 |
-        (uint64_t) pkt->b.timestamp[2] << 24 |
-        (uint64_t) pkt->b.timestamp[3] << 16 |
-        (uint64_t) pkt->b.timestamp[4] << 8  |
-        (uint64_t) pkt->b.timestamp[5] << 0;
+    memcpy(&t.bytes[ASFT_TS_HIDE], pkt->b.timestamp, ASFT_TS_LEN);
+    uint64_t timestamp_received = be64toh(t.be);
 
-    if (timestamp_new != ctx->timestamp) {
+    if (timestamp_received != ctx->timestamp) {
         asft_error("Replay detected\n");
+        rv = 1;
         goto error;
     }
 
