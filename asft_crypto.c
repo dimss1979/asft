@@ -38,6 +38,57 @@ union ts {
     uint8_t bytes[8];
 };
 
+static int scrypt(
+    void *key,
+    size_t key_len,
+    void *password
+) {
+    int rv = 1;
+    EVP_KDF *kdf = NULL;
+    EVP_KDF_CTX *kctx = NULL;
+    OSSL_PARAM params[6], *p = params;
+
+    // Random
+    char salt[] = "QEf6AJSdvz4RH+mswss1KdaUF/F0UgIhLDvXeljxvR5Vt7TcV0PCPVCxvKJcY/DtAMUONzgSNc1p"
+        "WxWRBC0lB8fmRVHoMVz4gjtgJ0TDESGz4/vKl+INTuuQ1A5iBGz3byHekaZRBtKMhZO1Y7a/VGQK"
+        "7ZsBBArBkMYJpJ5NphE=";
+    uint64_t param_N = 1024;
+    uint32_t param_r = 8;
+    uint32_t param_p = 16;
+
+    if (!key || !key_len || !password)
+        goto error;
+
+    kdf = EVP_KDF_fetch(NULL, "SCRYPT", NULL);
+    if (!kdf)
+        goto error;
+
+    kctx = EVP_KDF_CTX_new(kdf);
+    if (!kctx)
+        goto error;
+
+    *p++ = OSSL_PARAM_construct_uint64(OSSL_KDF_PARAM_SCRYPT_N, &param_N);
+    *p++ = OSSL_PARAM_construct_uint32(OSSL_KDF_PARAM_SCRYPT_R, &param_r);
+    *p++ = OSSL_PARAM_construct_uint32(OSSL_KDF_PARAM_SCRYPT_P, &param_p);
+    *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_SALT, salt, strlen(salt));
+    *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_PASSWORD, password, strlen(password));
+    *p = OSSL_PARAM_construct_end();
+
+    if (EVP_KDF_derive(kctx, key, key_len, params) != 1)
+        goto error;
+
+    rv = 0;
+
+error:
+
+    if (kctx)
+        EVP_KDF_CTX_free(kctx);
+    if (kdf)
+        EVP_KDF_free(kdf);
+
+    return rv;
+}
+
 static int HKDF(
     void *key,
     size_t key_len,
@@ -375,11 +426,7 @@ struct asft_crypto_ctx *asft_crypto_ctx_init(char *password)
     memset(ctx, 0, sizeof(*ctx));
 
     ctx->timestamp = asft_timestamp();
-    int rv = HKDF(
-        ctx->master_key, sizeof(ctx->master_key),
-        password, strlen(password),
-        "master-key"
-    );
+    int rv = scrypt(ctx->master_key, sizeof(ctx->master_key), password);
     if (rv)
         goto error;
 
