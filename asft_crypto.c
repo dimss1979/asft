@@ -27,6 +27,8 @@ struct asft_crypto_ctx {
     uint64_t timestamp;
     uint8_t request_key[CHACHA_KEY_SIZE];
     uint8_t response_key[CHACHA_KEY_SIZE];
+    uint8_t msg_key[CHACHA_KEY_SIZE];
+    uint8_t msg_hdr_key[CHACHA_KEY_SIZE];
 };
 
 union ts {
@@ -228,6 +230,7 @@ error:
 
 static int chaSIV_F(
     unsigned char *Ke,
+    size_t Ke_len,
     unsigned char *K,
     unsigned char *N,
     size_t N_len
@@ -264,10 +267,12 @@ static int chaSIV_F(
     }
 
     size_t output_len = 0;
-    if (EVP_MAC_final(ctx, Ke, &output_len, CHACHA_KEY_SIZE) != 1) {
+    unsigned char output[CHACHA_KEY_SIZE];
+    if (EVP_MAC_final(ctx, output, &output_len, CHACHA_KEY_SIZE) != 1) {
         asft_error("Cannot finalize MAC of nonce\n");
         goto error;
     }
+    memcpy(Ke, output, Ke_len);
 
     rv = 0;
 
@@ -309,7 +314,7 @@ static int chaSIV_encrypt(
     memcpy(E_nonce + 4, T, ASFT_TAG_LEN);
 
     unsigned char Ke[CHACHA_KEY_SIZE] = {0};
-    if (chaSIV_F(Ke, K, N, N_len)) {
+    if (chaSIV_F(Ke, CHACHA_KEY_SIZE, K, N, N_len)) {
         asft_error("Encryption F() failed\n");
         goto error;
     }
@@ -362,7 +367,7 @@ static int chaSIV_decrypt(
     memcpy(E_nonce + 4, T, ASFT_TAG_LEN);
 
     unsigned char Ke[CHACHA_KEY_SIZE] = {0};
-    if (chaSIV_F(Ke, K, N, N_len)) {
+    if (chaSIV_F(Ke, CHACHA_KEY_SIZE, K, N, N_len)) {
         asft_error("Decryption F() failed\n");
         goto error;
     }
@@ -416,6 +421,22 @@ struct asft_crypto_ctx *asft_crypto_ctx_init(char *password)
         ctx->response_key, sizeof(ctx->response_key),
         master_key, sizeof(master_key),
         "asft-response-key"
+    );
+    if (rv)
+        goto error;
+
+    rv = HKDF(
+        ctx->msg_key, sizeof(ctx->msg_key),
+        master_key, sizeof(master_key),
+        "asft-message-key"
+    );
+    if (rv)
+        goto error;
+
+    rv = HKDF(
+        ctx->msg_hdr_key, sizeof(ctx->msg_hdr_key),
+        master_key, sizeof(master_key),
+        "asft-message-header-key"
     );
     if (rv)
         goto error;
@@ -539,4 +560,74 @@ int asft_decrypt_resp(
 error:
 
     return rv;
+}
+
+int asft_sign_msg(
+    struct asft_crypto_ctx *ctx,
+    void *mac,
+    size_t mac_len,
+    void *msg,
+    size_t msg_len
+) {
+    if (chaSIV_F(mac, mac_len, ctx->msg_key, msg, msg_len)) {
+        asft_error("Message MAC calculation failed\n");
+        return 1;
+    }
+
+    return 0;
+}
+
+int asft_verify_msg(
+    struct asft_crypto_ctx *ctx,
+    void *mac,
+    size_t mac_len,
+    void *msg,
+    size_t msg_len
+) {
+    unsigned char actual_mac[CHACHA_KEY_SIZE];
+
+    if (chaSIV_F(actual_mac, mac_len, ctx->msg_key, msg, msg_len)) {
+        asft_error("Message actual MAC calculation failed\n");
+        return 1;
+    }
+
+    if (CRYPTO_memcmp(actual_mac, mac, mac_len))
+        return 1;
+
+    return 0;
+}
+
+int asft_sign_msg_hdr(
+    struct asft_crypto_ctx *ctx,
+    void *mac,
+    size_t mac_len,
+    void *msg_hdr,
+    size_t msg_hdr_len
+) {
+    if (chaSIV_F(mac, mac_len, ctx->msg_hdr_key, msg_hdr, msg_hdr_len)) {
+        asft_error("Message header MAC calculation failed\n");
+        return 1;
+    }
+
+    return 0;
+}
+
+int asft_verify_msg_hdr(
+    struct asft_crypto_ctx *ctx,
+    void *mac,
+    size_t mac_len,
+    void *msg_hdr,
+    size_t msg_hdr_len
+) {
+    unsigned char actual_mac[CHACHA_KEY_SIZE];
+
+    if (chaSIV_F(actual_mac, mac_len, ctx->msg_hdr_key, msg_hdr, msg_hdr_len)) {
+        asft_error("Message header actual MAC calculation failed\n");
+        return 1;
+    }
+
+    if (CRYPTO_memcmp(actual_mac, mac, mac_len))
+        return 1;
+
+    return 0;
 }

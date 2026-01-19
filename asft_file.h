@@ -8,6 +8,7 @@ struct asft_blob_tx {
     char *path;
     size_t blob_len;
     size_t blob_pos;
+    void *crypto_ctx;
 };
 
 struct asft_blob_rx {
@@ -16,6 +17,7 @@ struct asft_blob_rx {
     uint16_t last_block_idx;
     uint8_t last_block[ASFT_BLOCK_LEN];
     uint8_t ack;
+    void *crypto_ctx;
 };
 
 void asft_blob_tx_init(struct asft_blob_tx *tx, char *dir);

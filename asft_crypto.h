@@ -35,4 +35,36 @@ int asft_decrypt_resp(
     size_t cpkt_len
 );
 
+int asft_sign_msg(
+    struct asft_crypto_ctx *ctx,
+    void *mac,
+    size_t mac_len,
+    void *msg,
+    size_t msg_len
+);
+
+int asft_verify_msg(
+    struct asft_crypto_ctx *ctx,
+    void *mac,
+    size_t mac_len,
+    void *msg,
+    size_t msg_len
+);
+
+int asft_sign_msg_hdr(
+    struct asft_crypto_ctx *ctx,
+    void *mac,
+    size_t mac_len,
+    void *msg_hdr,
+    size_t msg_hdr_len
+);
+
+int asft_verify_msg_hdr(
+    struct asft_crypto_ctx *ctx,
+    void *mac,
+    size_t mac_len,
+    void *msg_hdr,
+    size_t msg_hdr_len
+);
+
 #endif

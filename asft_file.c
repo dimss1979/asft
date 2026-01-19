@@ -13,14 +13,12 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <stdbool.h>
-#include <openssl/evp.h>
 
 #include "asft_misc.h"
 #include "asft_crypto.h"
 
 #include "asft_file.h"
 
-#define BLOB_HASH_LEN     4
 #define FILE_SIZE_MAX     1000000
 #define PATH_LEN (PATH_MAX + 1)
 
@@ -31,8 +29,8 @@ enum data_ack {
 };
 
 struct blob_hdr {
-    uint8_t hash[BLOB_HASH_LEN];
-    uint32_t magic_zero;
+    uint8_t hdr_mac[4];
+    uint8_t mac[4];
     uint32_t blob_len;
     uint8_t filename_len;
     uint8_t data[];
@@ -50,24 +48,20 @@ static uint8_t rx_receive_block(struct asft_blob_rx *rx, uint16_t pkt_block_idx,
     memcpy(&rx->blob[blob_pos], pkt_data, block_len);
 
     if (bytes_left <= ASFT_BLOCK_LEN) {
-        unsigned char blob_digest[EVP_MAX_MD_SIZE];
-        unsigned int blob_digest_size;
-        EVP_Digest(
-            &rx->blob[BLOB_HASH_LEN],
-            rx->blob_len - BLOB_HASH_LEN,
-            blob_digest,
-            &blob_digest_size,
-            EVP_blake2b512(),
-            NULL
-        );
+        struct blob_hdr *hdr = (struct blob_hdr*) rx->blob;
 
-        if (CRYPTO_memcmp(rx->blob, blob_digest, BLOB_HASH_LEN)) {
-            asft_error("RX BLOB hash mismatch\n");
+        if (asft_verify_msg(
+            rx->crypto_ctx,
+            hdr->mac,
+            sizeof(hdr->mac),
+            hdr->data,
+            rx->blob_len - sizeof(*hdr)
+        )) {
+            asft_error("RX BLOB MAC mismatch\n");
             return DATA_ACK_RESTART;
         }
 
         char filename[256] = {0};
-        struct blob_hdr *hdr = (struct blob_hdr*) rx->blob;
         memcpy(filename, hdr->data, hdr->filename_len);
         char path_tmp[PATH_LEN] = {0};
         char path[PATH_LEN] = {0};
@@ -188,7 +182,6 @@ void asft_blob_tx_init(struct asft_blob_tx *tx, char *dir)
     }
 
     struct blob_hdr *hdr = (struct blob_hdr*) tx->blob;
-    hdr->magic_zero = 0;
     hdr->blob_len = htobe32(blob_len);
     hdr->filename_len = filename_len;
     tx->blob_len = blob_len;
@@ -217,18 +210,28 @@ void asft_blob_tx_init(struct asft_blob_tx *tx, char *dir)
     close(fd);
     fd = -1;
 
+    if (asft_sign_msg(
+        tx->crypto_ctx,
+        hdr->mac,
+        sizeof(hdr->mac),
+        hdr->data,
+        tx->blob_len - sizeof(*hdr)
+    )) {
+        asft_error("TX BLOB MAC failed\n");
+        goto error;
+    }
 
-    unsigned char blob_digest[EVP_MAX_MD_SIZE];
-    unsigned int blob_digest_size;
-    EVP_Digest(
-        &tx->blob[BLOB_HASH_LEN],
-        blob_len - BLOB_HASH_LEN,
-        blob_digest,
-        &blob_digest_size,
-        EVP_blake2b512(),
-        NULL
-    );
-    memcpy(hdr->hash, blob_digest, BLOB_HASH_LEN);
+    if (asft_sign_msg_hdr(
+        tx->crypto_ctx,
+        hdr->hdr_mac,
+        sizeof(hdr->hdr_mac),
+        ((void*) hdr) + sizeof(hdr->hdr_mac),
+        sizeof(*hdr) - sizeof(hdr->hdr_mac)
+    )) {
+        asft_error("TX BLOB header MAC failed\n");
+        goto error;
+    }
+
 
     return;
 
@@ -305,9 +308,15 @@ void asft_blob_rx_receive(struct asft_blob_rx *rx, uint16_t pkt_block_idx, uint8
     } else if (pkt_block_idx == 0) {
         struct blob_hdr *hdr = (struct blob_hdr*) pkt_data;
 
-        if (hdr->magic_zero) {
-            asft_error("RX BLOB magic is not zero\n");
-            rx->ack = DATA_ACK_NONE;
+        if (asft_verify_msg_hdr(
+            rx->crypto_ctx,
+            hdr->hdr_mac,
+            sizeof(hdr->hdr_mac),
+            ((void*) hdr) + sizeof(hdr->hdr_mac),
+            sizeof(*hdr) - sizeof(hdr->hdr_mac)
+        )) {
+            asft_error("RX BLOB header MAC mismatch\n");
+            rx->ack = DATA_ACK_RESTART;
             return;
         }
 

@@ -139,6 +139,8 @@ int asft_node_set_gateway(char *label, char *password)
 
     gw.label = strdup(label);
     gw.crypto_ctx = asft_crypto_ctx_init(password);
+    gw.blob_tx.crypto_ctx = gw.crypto_ctx;
+    gw.blob_rx.crypto_ctx = gw.crypto_ctx;
 
     if (!gw.crypto_ctx || !gw.label)
         goto error;

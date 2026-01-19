@@ -266,6 +266,8 @@ int asft_gateway_add_node(char *label, char *password)
     if (!new->crypto_ctx)
         goto error;
 
+    new->blob_tx.crypto_ctx = new->crypto_ctx;
+    new->blob_rx.crypto_ctx = new->crypto_ctx;
     new->next = node_first;
     node_first = new;
     node_cnt++;
