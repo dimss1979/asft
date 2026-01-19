@@ -4,8 +4,9 @@
 #include <stdint.h>
 
 #define ASFT_TAG_LEN    10
-#define ASFT_TS_LEN     2
-#define ASFT_TS_HIDE    (sizeof(uint64_t) - ASFT_TS_LEN)
+#define ASFT_TS_LEN     sizeof(uint64_t)
+#define ASFT_TS_XMIT    2
+#define ASFT_TS_HIDE    (ASFT_TS_LEN - ASFT_TS_XMIT)
 #define ASFT_BLOCK_LEN  100
 
 #define ASFT_PKT_LEN_NODATA  (sizeof(struct asft_pkt_nodata))
@@ -13,7 +14,7 @@
 
 struct asft_pkt_base {
     uint8_t tag[ASFT_TAG_LEN];
-    uint8_t timestamp[ASFT_TS_LEN];
+    uint8_t timestamp[ASFT_TS_XMIT];
     uint8_t ack;
 } __attribute__((packed));
 

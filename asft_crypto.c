@@ -23,19 +23,15 @@
 
 _Static_assert(ASFT_TAG_LEN + 4 <= CHACHA_CTR_SIZE, "MAC tag must not overlap chacha20 32-bit counter");
 
-struct asft_key {
-    unsigned char enc[CHACHA_KEY_SIZE];
-    unsigned char enc_of_nonce[CHACHA_KEY_SIZE];
-};
-
 struct asft_crypto_ctx {
     uint64_t timestamp;
-    uint8_t master_key[64];
+    uint8_t request_key[CHACHA_KEY_SIZE];
+    uint8_t response_key[CHACHA_KEY_SIZE];
 };
 
 union ts {
     uint64_t be;
-    uint8_t bytes[8];
+    uint8_t bytes[ASFT_TS_LEN];
 };
 
 static int scrypt(
@@ -172,9 +168,7 @@ static int chaSIV_H(
     unsigned char *N,
     size_t N_len,
     unsigned char *M,
-    size_t M_len,
-    unsigned char *AD,
-    size_t AD_len
+    size_t M_len
 )
 {
     int rv = -1;
@@ -208,10 +202,6 @@ static int chaSIV_H(
         goto error;
     }
     if (EVP_DigestUpdate(mdctx, M, M_len) != 1) {
-        asft_error("Cannot update digest\n");
-        goto error;
-    }
-    if (EVP_DigestUpdate(mdctx, AD, AD_len) != 1) {
         asft_error("Cannot update digest\n");
         goto error;
     }
@@ -295,26 +285,22 @@ static int chaSIV_encrypt(
     void *cpkt,
     void *pkt,
     size_t pkt_len,
-    struct asft_key *key,
-    size_t N_len,
-    void *AD,
-    size_t AD_len
+    void *K,
+    void *N
 ) {
     int rv = -1;
-    unsigned char *M = pkt + ASFT_TAG_LEN + N_len;
-    unsigned char *C = cpkt + ASFT_TAG_LEN + N_len;
-    size_t M_len = pkt_len - ASFT_TAG_LEN - N_len;
+    unsigned char *M = pkt + ASFT_TAG_LEN + ASFT_TS_XMIT;
+    unsigned char *C = cpkt + ASFT_TAG_LEN + ASFT_TS_XMIT;
+    size_t M_len = pkt_len - ASFT_TAG_LEN - ASFT_TS_XMIT;
     unsigned char *T = cpkt;
-    unsigned char *K = key->enc;
-    unsigned char *N = pkt + ASFT_TAG_LEN;
-    unsigned char *Nc = cpkt + ASFT_TAG_LEN;
+    size_t N_len = ASFT_TS_LEN;
 
     EVP_CIPHER_CTX *ctx = NULL;
 
     if (M_len < 1)
         goto error;
 
-    if (chaSIV_H(T, K, N, N_len, M, M_len, AD, AD_len)) {
+    if (chaSIV_H(T, K, N, N_len, M, M_len)) {
         asft_error("Encryption H() failed\n");
         goto error;
     }
@@ -337,11 +323,6 @@ static int chaSIV_encrypt(
     if (chacha20(C, M, M_len, Ke, E_nonce))
         goto error;
 
-    // Additional step - nonce encryption
-    // Not a part of chaSIV
-    if (chacha20(Nc, N, N_len, key->enc_of_nonce, E_nonce))
-        goto error;
-
     rv = 0;
 
 error:
@@ -356,19 +337,15 @@ static int chaSIV_decrypt(
     void *pkt,
     void *cpkt,
     size_t cpkt_len,
-    struct asft_key *key,
-    size_t N_len,
-    void *AD,
-    size_t AD_len
+    void *K,
+    void *N
 ) {
     int rv = -1;
-    unsigned char *M = pkt + ASFT_TAG_LEN + N_len;
-    unsigned char *C = cpkt + ASFT_TAG_LEN + N_len;
-    size_t C_len = cpkt_len - ASFT_TAG_LEN - N_len;
+    unsigned char *M = pkt + ASFT_TAG_LEN + ASFT_TS_XMIT;
+    unsigned char *C = cpkt + ASFT_TAG_LEN + ASFT_TS_XMIT;
+    size_t C_len = cpkt_len - ASFT_TAG_LEN - ASFT_TS_XMIT;
     unsigned char *T = cpkt;
-    unsigned char *K = key->enc;
-    unsigned char *N = pkt + ASFT_TAG_LEN;
-    unsigned char *Nc = cpkt + ASFT_TAG_LEN;
+    size_t N_len = ASFT_TS_LEN;
 
     EVP_CIPHER_CTX *ctx = NULL;
 
@@ -384,11 +361,6 @@ static int chaSIV_decrypt(
     unsigned char E_nonce[CHACHA_CTR_SIZE] = {0};
     memcpy(E_nonce + 4, T, ASFT_TAG_LEN);
 
-    // Additional step - nonce decryption
-    // Not a part of chaSIV
-    if (chacha20(N, Nc, N_len, key->enc_of_nonce, E_nonce))
-        goto error;
-
     unsigned char Ke[CHACHA_KEY_SIZE] = {0};
     if (chaSIV_F(Ke, K, N, N_len)) {
         asft_error("Decryption F() failed\n");
@@ -399,7 +371,7 @@ static int chaSIV_decrypt(
         goto error;
 
     unsigned char T_local[ASFT_TAG_LEN];
-    if (chaSIV_H(T_local, K, N, N_len, M, C_len, AD, AD_len)) {
+    if (chaSIV_H(T_local, K, N, N_len, M, C_len)) {
         asft_error("Decryption H() failed\n");
         goto error;
     }
@@ -426,7 +398,25 @@ struct asft_crypto_ctx *asft_crypto_ctx_init(char *password)
     memset(ctx, 0, sizeof(*ctx));
 
     ctx->timestamp = asft_timestamp();
-    int rv = scrypt(ctx->master_key, sizeof(ctx->master_key), password);
+
+    uint8_t master_key[64];
+    int rv = scrypt(master_key, sizeof(master_key), password);
+    if (rv)
+        goto error;
+
+    rv = HKDF(
+        ctx->request_key, sizeof(ctx->request_key),
+        master_key, sizeof(master_key),
+        "asft-request-key"
+    );
+    if (rv)
+        goto error;
+
+    rv = HKDF(
+        ctx->response_key, sizeof(ctx->response_key),
+        master_key, sizeof(master_key),
+        "asft-response-key"
+    );
     if (rv)
         goto error;
 
@@ -450,29 +440,12 @@ int asft_encrypt_req(
     union ts t;
     ctx->timestamp = asft_timestamp();
     t.be = htobe64(ctx->timestamp);
-    memcpy(pkt->b.timestamp, &t.bytes[ASFT_TS_HIDE], ASFT_TS_LEN);
 
-    struct asft_key key;
-
-    rv = HKDF(
-        key.enc, sizeof(key.enc),
-        ctx->master_key, sizeof(ctx->master_key),
-        "asft-request-key"
-    );
+    rv = chaSIV_encrypt(cpkt, pkt, pkt_len, ctx->request_key, t.bytes);
     if (rv)
         goto error;
 
-    rv = HKDF(
-        key.enc_of_nonce, sizeof(key.enc_of_nonce),
-        ctx->master_key, sizeof(ctx->master_key),
-        "asft-request-key-for-nonce"
-    );
-    if (rv)
-        goto error;
-
-    rv = chaSIV_encrypt(cpkt, pkt, pkt_len, &key, sizeof(pkt->b.timestamp), t.bytes, ASFT_TS_HIDE);
-    if (rv)
-        goto error;
+    memcpy(cpkt->b.timestamp, &t.bytes[ASFT_TS_HIDE], ASFT_TS_XMIT);
 
     rv = 0;
 
@@ -488,49 +461,24 @@ int asft_decrypt_req(
     size_t cpkt_len
 ) {
     int rv = 1;
-    struct asft_key key;
 
-    rv = HKDF(
-        key.enc, sizeof(key.enc),
-        ctx->master_key, sizeof(ctx->master_key),
-        "asft-request-key"
-    );
-    if (rv)
-        goto error;
-
-    rv = HKDF(
-        key.enc_of_nonce, sizeof(key.enc_of_nonce),
-        ctx->master_key, sizeof(ctx->master_key),
-        "asft-request-key-for-nonce"
-    );
-    if (rv)
-        goto error;
-
+    uint64_t now = asft_timestamp();
     union ts t;
-    t.be = htobe64(asft_timestamp());
 
-    rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, &key, sizeof(pkt->b.timestamp), t.bytes, ASFT_TS_HIDE);
-    if (!rv)
-        goto decrypted;
+    for (int64_t correction = -1; correction <= 1; correction++) {
+        t.be = htobe64(now + correction * (1ULL << (ASFT_TS_XMIT * 8)));
+        memcpy(&t.bytes[ASFT_TS_HIDE], cpkt->b.timestamp, ASFT_TS_XMIT);
 
-    t.be = htobe64(asft_timestamp() - (1ULL << (ASFT_TS_LEN * 8)));
-
-    rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, &key, sizeof(pkt->b.timestamp), t.bytes, ASFT_TS_HIDE);
-    if (!rv)
-        goto decrypted;
-
-    t.be = htobe64(asft_timestamp() + (1ULL << (ASFT_TS_LEN * 8)));
-
-    rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, &key, sizeof(pkt->b.timestamp), t.bytes, ASFT_TS_HIDE);
-    if (!rv)
-        goto decrypted;
+        rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, ctx->request_key, t.bytes);
+        if (!rv)
+            goto decrypted;
+    }
 
     rv = 1;
     goto error;
 
 decrypted:
 
-    memcpy(&t.bytes[ASFT_TS_HIDE], pkt->b.timestamp, ASFT_TS_LEN);
     uint64_t timestamp_new = be64toh(t.be);
 
     if (timestamp_new <= ctx->timestamp) {
@@ -557,29 +505,12 @@ int asft_encrypt_resp(
 
     union ts t;
     t.be = htobe64(ctx->timestamp);
-    memcpy(pkt->b.timestamp, &t.bytes[ASFT_TS_HIDE], ASFT_TS_LEN);
 
-    struct asft_key key;
-
-    rv = HKDF(
-        key.enc, sizeof(key.enc),
-        ctx->master_key, sizeof(ctx->master_key),
-        "asft-response-key"
-    );
+    rv = chaSIV_encrypt(cpkt, pkt, pkt_len, ctx->response_key, t.bytes);
     if (rv)
         goto error;
 
-    rv = HKDF(
-        key.enc_of_nonce, sizeof(key.enc_of_nonce),
-        ctx->master_key, sizeof(ctx->master_key),
-        "asft-response-key-for-nonce"
-    );
-    if (rv)
-        goto error;
-
-    rv = chaSIV_encrypt(cpkt, pkt, pkt_len, &key, sizeof(pkt->b.timestamp), t.bytes, ASFT_TS_HIDE);
-    if (rv)
-        goto error;
+    // Timestamp field in response is unused!
 
     rv = 0;
 
@@ -596,39 +527,12 @@ int asft_decrypt_resp(
 ) {
     int rv = 1;
 
-    struct asft_key key;
-
-    rv = HKDF(
-        key.enc, sizeof(key.enc),
-        ctx->master_key, sizeof(ctx->master_key),
-        "asft-response-key"
-    );
-    if (rv)
-        goto error;
-
-    rv = HKDF(
-        key.enc_of_nonce, sizeof(key.enc_of_nonce),
-        ctx->master_key, sizeof(ctx->master_key),
-        "asft-response-key-for-nonce"
-    );
-    if (rv)
-        goto error;
-
     union ts t;
     t.be = htobe64(ctx->timestamp);
 
-    rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, &key, sizeof(pkt->b.timestamp), t.bytes, ASFT_TS_HIDE);
+    rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, ctx->response_key, t.bytes);
     if (rv)
         goto error;
-
-    memcpy(&t.bytes[ASFT_TS_HIDE], pkt->b.timestamp, ASFT_TS_LEN);
-    uint64_t timestamp_received = be64toh(t.be);
-
-    if (timestamp_received != ctx->timestamp) {
-        asft_error("Replay detected\n");
-        rv = 1;
-        goto error;
-    }
 
     rv = 0;
 
