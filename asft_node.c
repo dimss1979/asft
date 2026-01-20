@@ -22,8 +22,8 @@ static struct gateway
     char *label;
     struct asft_crypto_ctx *crypto_ctx;
 
-    struct asft_blob_tx blob_tx;
-    struct asft_blob_rx blob_rx;
+    struct asft_msg_tx msg_tx;
+    struct asft_msg_rx msg_rx;
     char *upload_dir;
     char *download_dir;
 } gw = { 0 };
@@ -52,22 +52,22 @@ error:
 static void process_req_data(asft_pkt *req, asft_pkt *resp, size_t *resp_len, bool have_data)
 {
     if (have_data) {
-        asft_blob_rx_receive(&gw.blob_rx, be16toh(req->data.block_idx), req->data.data, gw.download_dir);
+        asft_msg_rx_receive(&gw.msg_rx, be16toh(req->data.block_idx), req->data.data, gw.download_dir);
     }
     uint8_t ack = req->b.ack;
-    asft_blob_tx_ack(&gw.blob_tx, ack);
-    asft_blob_tx_init(&gw.blob_tx, gw.upload_dir);
+    asft_msg_tx_ack(&gw.msg_tx, ack);
+    asft_msg_tx_init(&gw.msg_tx, gw.upload_dir);
 
-    if (gw.blob_tx.blob) {
+    if (gw.msg_tx.msg) {
         *resp_len = sizeof(resp->data);
 
         uint16_t block_idx = 0;
-        asft_blob_tx_send(&gw.blob_tx, &block_idx, resp->data.data);
+        asft_msg_tx_send(&gw.msg_tx, &block_idx, resp->data.data);
         resp->data.block_idx = htobe16(block_idx);
     } else {
         *resp_len = sizeof(resp->nodata);
     }
-    asft_blob_rx_get_ack(&gw.blob_rx, &resp->b.ack);
+    asft_msg_rx_get_ack(&gw.msg_rx, &resp->b.ack);
 }
 
 int asft_node_loop()
@@ -139,8 +139,8 @@ int asft_node_set_gateway(char *label, char *password)
 
     gw.label = strdup(label);
     gw.crypto_ctx = asft_crypto_ctx_init(password);
-    gw.blob_tx.crypto_ctx = gw.crypto_ctx;
-    gw.blob_rx.crypto_ctx = gw.crypto_ctx;
+    gw.msg_tx.crypto_ctx = gw.crypto_ctx;
+    gw.msg_rx.crypto_ctx = gw.crypto_ctx;
 
     if (!gw.crypto_ctx || !gw.label)
         goto error;

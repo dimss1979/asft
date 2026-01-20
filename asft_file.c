@@ -28,36 +28,36 @@ enum data_ack {
     DATA_ACK_RESTART = 2,
 };
 
-struct blob_hdr {
+struct msg_hdr {
     uint8_t hdr_mac[4];
     uint8_t mac[4];
-    uint32_t blob_len;
+    uint32_t msg_len;
     uint8_t filename_len;
     uint8_t data[];
 } __attribute__((packed));
 
-static uint8_t rx_receive_block(struct asft_blob_rx *rx, uint16_t pkt_block_idx, uint8_t *pkt_data, char *dir)
+static uint8_t rx_receive_block(struct asft_msg_rx *rx, uint16_t pkt_block_idx, uint8_t *pkt_data, char *dir)
 {
-    size_t blob_pos = pkt_block_idx * ASFT_BLOCK_LEN;
-    size_t bytes_left = rx->blob_len - blob_pos;
+    size_t msg_pos = pkt_block_idx * ASFT_BLOCK_LEN;
+    size_t bytes_left = rx->msg_len - msg_pos;
     size_t block_len = ASFT_BLOCK_LEN;
     if (bytes_left < ASFT_BLOCK_LEN) {
         block_len = bytes_left;
     }
 
-    memcpy(&rx->blob[blob_pos], pkt_data, block_len);
+    memcpy(&rx->msg[msg_pos], pkt_data, block_len);
 
     if (bytes_left <= ASFT_BLOCK_LEN) {
-        struct blob_hdr *hdr = (struct blob_hdr*) rx->blob;
+        struct msg_hdr *hdr = (struct msg_hdr*) rx->msg;
 
         if (asft_verify_msg(
             rx->crypto_ctx,
             hdr->mac,
             sizeof(hdr->mac),
             hdr->data,
-            rx->blob_len - sizeof(*hdr)
+            rx->msg_len - sizeof(*hdr)
         )) {
-            asft_error("RX BLOB MAC mismatch\n");
+            asft_error("RX MSG MAC mismatch\n");
             return DATA_ACK_RESTART;
         }
 
@@ -81,7 +81,7 @@ static uint8_t rx_receive_block(struct asft_blob_rx *rx, uint16_t pkt_block_idx,
         }
 
         uint8_t *buf = &hdr->data[hdr->filename_len];
-        size_t left = rx->blob_len - hdr->filename_len - sizeof(struct blob_hdr);
+        size_t left = rx->msg_len - hdr->filename_len - sizeof(struct msg_hdr);
 
         while (left) {
             int rv = write(fd, buf, left);
@@ -111,9 +111,9 @@ static uint8_t rx_receive_block(struct asft_blob_rx *rx, uint16_t pkt_block_idx,
     return DATA_ACK_OK;
 }
 
-void asft_blob_tx_init(struct asft_blob_tx *tx, char *dir)
+void asft_msg_tx_init(struct asft_msg_tx *tx, char *dir)
 {
-    if (tx->blob)
+    if (tx->msg)
         return;
 
     char path[PATH_LEN], filename[PATH_LEN];
@@ -173,38 +173,38 @@ void asft_blob_tx_init(struct asft_blob_tx *tx, char *dir)
 
     asft_info("Sending file '%s' %li bytes\n", path, file_len);
 
-    size_t blob_len = sizeof(struct blob_hdr) + filename_len + file_len;
-    tx->blob = malloc(blob_len);
+    size_t msg_len = sizeof(struct msg_hdr) + filename_len + file_len;
+    tx->msg = malloc(msg_len);
     tx->path = strdup(path);
-    if (!tx->blob || !tx->path) {
-        asft_error("TX BLOB memory allocation error\n");
+    if (!tx->msg || !tx->path) {
+        asft_error("TX MSG memory allocation error\n");
         goto error;
     }
 
-    struct blob_hdr *hdr = (struct blob_hdr*) tx->blob;
-    hdr->blob_len = htobe32(blob_len);
+    struct msg_hdr *hdr = (struct msg_hdr*) tx->msg;
+    hdr->msg_len = htobe32(msg_len);
     hdr->filename_len = filename_len;
-    tx->blob_len = blob_len;
-    tx->blob_pos = 0;
+    tx->msg_len = msg_len;
+    tx->msg_pos = 0;
     memcpy(hdr->data, filename, filename_len);
 
     int fd = open(path, O_RDONLY, 0);
     if (fd < 0) {
-        asft_error("Cannot open TX BLOB input file\n");
+        asft_error("Cannot open TX MSG input file\n");
         goto error;
     }
 
     size_t bytes_left = file_len;
-    uint8_t *blob_pos = &hdr->data[filename_len];
+    uint8_t *msg_pos = &hdr->data[filename_len];
     while (bytes_left) {
-        size_t bytes_read = read(fd, blob_pos, bytes_left);
+        size_t bytes_read = read(fd, msg_pos, bytes_left);
         if (bytes_read <= 0) {
             if (errno == EINTR)
                 continue;
-            asft_error("TX BLOB read failed\n");
+            asft_error("TX MSG read failed\n");
             goto error;
         }
-        blob_pos += bytes_read;
+        msg_pos += bytes_read;
         bytes_left -= bytes_read;
     }
     close(fd);
@@ -215,9 +215,9 @@ void asft_blob_tx_init(struct asft_blob_tx *tx, char *dir)
         hdr->mac,
         sizeof(hdr->mac),
         hdr->data,
-        tx->blob_len - sizeof(*hdr)
+        tx->msg_len - sizeof(*hdr)
     )) {
-        asft_error("TX BLOB MAC failed\n");
+        asft_error("TX MSG MAC failed\n");
         goto error;
     }
 
@@ -228,7 +228,7 @@ void asft_blob_tx_init(struct asft_blob_tx *tx, char *dir)
         ((void*) hdr) + sizeof(hdr->hdr_mac),
         sizeof(*hdr) - sizeof(hdr->hdr_mac)
     )) {
-        asft_error("TX BLOB header MAC failed\n");
+        asft_error("TX MSG header MAC failed\n");
         goto error;
     }
 
@@ -242,33 +242,33 @@ error:
     if (d)
         closedir(d);
 
-    free(tx->blob);
-    tx->blob = NULL;
+    free(tx->msg);
+    tx->msg = NULL;
     free(tx->path);
     tx->path = NULL;
 }
 
-void asft_blob_tx_send(struct asft_blob_tx *tx, uint16_t *pkt_block_idx, uint8_t *pkt_data)
+void asft_msg_tx_send(struct asft_msg_tx *tx, uint16_t *pkt_block_idx, uint8_t *pkt_data)
 {
-    if (!tx->blob) {
-        asft_error("TX BLOB not initialized but sending\n");
+    if (!tx->msg) {
+        asft_error("TX MSG not initialized but sending\n");
         return;
     }
 
-    *pkt_block_idx = tx->blob_pos / ASFT_BLOCK_LEN;
+    *pkt_block_idx = tx->msg_pos / ASFT_BLOCK_LEN;
     memset(pkt_data, 0, ASFT_BLOCK_LEN);
 
-    size_t bytes_left = tx->blob_len - tx->blob_pos;
+    size_t bytes_left = tx->msg_len - tx->msg_pos;
     size_t block_len = ASFT_BLOCK_LEN;
     if (bytes_left < ASFT_BLOCK_LEN)
         block_len = bytes_left;
 
-    memcpy(pkt_data, &tx->blob[tx->blob_pos], block_len);
+    memcpy(pkt_data, &tx->msg[tx->msg_pos], block_len);
 }
 
-void asft_blob_tx_ack(struct asft_blob_tx *tx, uint8_t ack)
+void asft_msg_tx_ack(struct asft_msg_tx *tx, uint8_t ack)
 {
-    if (!tx->blob) {
+    if (!tx->msg) {
         return;
     }
 
@@ -277,36 +277,36 @@ void asft_blob_tx_ack(struct asft_blob_tx *tx, uint8_t ack)
             break;
 
         case DATA_ACK_OK:
-            size_t bytes_left = tx->blob_len - tx->blob_pos;
+            size_t bytes_left = tx->msg_len - tx->msg_pos;
             if (bytes_left > ASFT_BLOCK_LEN) {
-                tx->blob_pos += ASFT_BLOCK_LEN;
+                tx->msg_pos += ASFT_BLOCK_LEN;
             } else {
                 asft_info("Sent file '%s'\n", tx->path);
                 unlink(tx->path);
                 sync();
                 free(tx->path);
-                free(tx->blob);
+                free(tx->msg);
                 tx->path = NULL;
-                tx->blob = NULL;
+                tx->msg = NULL;
             }
             break;
 
         case DATA_ACK_RESTART:
-            tx->blob_pos = 0;
+            tx->msg_pos = 0;
             break;
 
         default:
-            asft_error("TX BLOB received invalid ack\n");
+            asft_error("TX MSG received invalid ack\n");
             break;
     }
 }
 
-void asft_blob_rx_receive(struct asft_blob_rx *rx, uint16_t pkt_block_idx, uint8_t *pkt_data, char *dir)
+void asft_msg_rx_receive(struct asft_msg_rx *rx, uint16_t pkt_block_idx, uint8_t *pkt_data, char *dir)
 {
     if (pkt_block_idx == rx->last_block_idx && !memcmp(pkt_data, rx->last_block, ASFT_BLOCK_LEN)) {
         rx->ack = DATA_ACK_OK;
     } else if (pkt_block_idx == 0) {
-        struct blob_hdr *hdr = (struct blob_hdr*) pkt_data;
+        struct msg_hdr *hdr = (struct msg_hdr*) pkt_data;
 
         if (asft_verify_msg_hdr(
             rx->crypto_ctx,
@@ -315,41 +315,41 @@ void asft_blob_rx_receive(struct asft_blob_rx *rx, uint16_t pkt_block_idx, uint8
             ((void*) hdr) + sizeof(hdr->hdr_mac),
             sizeof(*hdr) - sizeof(hdr->hdr_mac)
         )) {
-            asft_error("RX BLOB header MAC mismatch\n");
+            asft_error("RX MSG header MAC mismatch\n");
             rx->ack = DATA_ACK_RESTART;
             return;
         }
 
-        size_t blob_len = be32toh(hdr->blob_len);
-        size_t blob_len_max = sizeof(struct blob_hdr) + hdr->filename_len + FILE_SIZE_MAX;
-        if (blob_len > blob_len_max) {
-            asft_error("RX BLOB is too big\n");
+        size_t msg_len = be32toh(hdr->msg_len);
+        size_t msg_len_max = sizeof(struct msg_hdr) + hdr->filename_len + FILE_SIZE_MAX;
+        if (msg_len > msg_len_max) {
+            asft_error("RX MSG is too big\n");
             rx->ack = DATA_ACK_NONE;
             return;
         }
 
-        rx->blob_len = 0;
+        rx->msg_len = 0;
         rx->last_block_idx = 0;
         memset(rx->last_block, 0 , ASFT_BLOCK_LEN);
-        free(rx->blob);
-        rx->blob = malloc(blob_len);
-        if (!rx->blob) {
-            asft_error("RX BLOB memory allocation error\n");
+        free(rx->msg);
+        rx->msg = malloc(msg_len);
+        if (!rx->msg) {
+            asft_error("RX MSG memory allocation error\n");
             rx->ack = DATA_ACK_NONE;
             return;
         }
-        rx->blob_len = blob_len;
+        rx->msg_len = msg_len;
 
         rx->ack = rx_receive_block(rx, pkt_block_idx, pkt_data, dir);
-    } else if (rx->blob && (pkt_block_idx == rx->last_block_idx + 1)) {
+    } else if (rx->msg && (pkt_block_idx == rx->last_block_idx + 1)) {
         rx->ack = rx_receive_block(rx, pkt_block_idx, pkt_data, dir);
     } else {
-        asft_error("RX BLOB out-of-order block\n");
+        asft_error("RX MSG out-of-order block\n");
         rx->ack = DATA_ACK_RESTART;
     }
 }
 
-void asft_blob_rx_get_ack(struct asft_blob_rx *rx, uint8_t *ack)
+void asft_msg_rx_get_ack(struct asft_msg_rx *rx, uint8_t *ack)
 {
     *ack = rx->ack;
     rx->ack = DATA_ACK_NONE;

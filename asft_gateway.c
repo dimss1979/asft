@@ -30,8 +30,8 @@ struct node
     bool error;
     bool got_response;
 
-    struct asft_blob_tx blob_tx;
-    struct asft_blob_rx blob_rx;
+    struct asft_msg_tx msg_tx;
+    struct asft_msg_rx msg_rx;
     char *upload_dir;
     char *download_dir;
 };
@@ -66,8 +66,8 @@ static void unpause_for_download()
     while (n)
     {
         if (n->pause_until > now && !n->error) {
-            asft_blob_tx_init(&n->blob_tx, n->download_dir);
-            if (n->blob_tx.blob) {
+            asft_msg_tx_init(&n->msg_tx, n->download_dir);
+            if (n->msg_tx.msg) {
                 n->pause_until = 0;
             }
         }
@@ -131,14 +131,14 @@ static void process_resp_data(struct node *n, asft_pkt *resp, bool have_data)
     n->retry = 0;
 
     if (have_data) {
-        asft_blob_rx_receive(&n->blob_rx, be16toh(resp->data.block_idx), resp->data.data, n->upload_dir);
+        asft_msg_rx_receive(&n->msg_rx, be16toh(resp->data.block_idx), resp->data.data, n->upload_dir);
     }
     uint8_t ack = resp->b.ack;
 
-    asft_blob_tx_ack(&n->blob_tx, ack);
+    asft_msg_tx_ack(&n->msg_tx, ack);
 
-    asft_blob_tx_init(&n->blob_tx, n->download_dir);
-    if (!n->blob_tx.blob && !have_data) {
+    asft_msg_tx_init(&n->msg_tx, n->download_dir);
+    if (!n->msg_tx.msg && !have_data) {
         proceed_idle(n);
     }
 }
@@ -170,17 +170,17 @@ int asft_gateway_loop()
         asft_pkt *cresp = NULL;
         size_t pkt_len = 0, rx_packet_len = 0;
 
-        asft_blob_tx_init(&n->blob_tx, n->download_dir);
-        if (n->blob_tx.blob) {
+        asft_msg_tx_init(&n->msg_tx, n->download_dir);
+        if (n->msg_tx.msg) {
             pkt_len = sizeof(pkt.data);
 
             uint16_t block_idx = 0;
-            asft_blob_tx_send(&n->blob_tx, &block_idx, pkt.data.data);
+            asft_msg_tx_send(&n->msg_tx, &block_idx, pkt.data.data);
             pkt.data.block_idx = htobe16(block_idx);
         } else {
             pkt_len = sizeof(pkt.nodata);
         }
-        asft_blob_rx_get_ack(&n->blob_rx, &pkt.b.ack);
+        asft_msg_rx_get_ack(&n->msg_rx, &pkt.b.ack);
 
         rv = asft_encrypt_req(n->crypto_ctx, &cpkt, &pkt, pkt_len);
         if (rv) {
@@ -266,8 +266,8 @@ int asft_gateway_add_node(char *label, char *password)
     if (!new->crypto_ctx)
         goto error;
 
-    new->blob_tx.crypto_ctx = new->crypto_ctx;
-    new->blob_rx.crypto_ctx = new->crypto_ctx;
+    new->msg_tx.crypto_ctx = new->crypto_ctx;
+    new->msg_rx.crypto_ctx = new->crypto_ctx;
     new->next = node_first;
     node_first = new;
     node_cnt++;
