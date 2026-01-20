@@ -7,7 +7,7 @@ Minimum line requirements are:
 
 * 8 bits (8N1)
 * Half-duplex. Full duplex is supported as well.
-* By default, maximum frame size is 118 bytes.
+* By default, maximum frame size is 112 bytes.
 
 Examples:
 
@@ -25,7 +25,7 @@ Nodes only respond to requests coming from gateway.
 Half-duplex nature and security make `asft` different from many other serial file transfer protocols.
 
 COBS framing is used.
-With default block and header size, maximum frame size is 120 bytes (including start and stop delimiters).
+With default block and header size, maximum frame size is 112 bytes (including start and stop delimiters).
 
 By default, `asft` will transfer files with size up to 1000000 bytes.
 File names beginning with a dot are ignored.
