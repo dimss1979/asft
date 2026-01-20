@@ -225,8 +225,7 @@ Both directories must be created in advance in the working directory of `asft`.
 ## Security
 
 Each node is addressed by its password only.
-Each transmitted packet is encrypted and authenticated, fully random-looking.
-No information is exposed besides packet length and transmission time.
+Each transmitted packet is encrypted and authenticated.
 Only basic encryption, authentication and replay protection is implemented.
 No PFS, no PCS at the moment.
 Gateway and node must maintain clock synchronization within a few seconds.

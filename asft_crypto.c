@@ -531,7 +531,11 @@ int asft_encrypt_resp(
     if (rv)
         goto error;
 
-    // Timestamp field in response is unused!
+    // Timestamp field in response is unused
+    // Fill with current time to make it look similar to request
+    union ts t_fake;
+    t_fake.be = htobe64(asft_timestamp());
+    memcpy(cpkt->b.timestamp, &t_fake.bytes[ASFT_TS_HIDE], ASFT_TS_XMIT);
 
     rv = 0;
 
