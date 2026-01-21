@@ -22,6 +22,8 @@ static struct gateway
     char *label;
     struct asft_crypto_ctx *crypto_ctx;
 
+    bool ready;
+
     struct asft_msg_tx msg_tx;
     struct asft_msg_rx msg_rx;
     char *upload_dir;
@@ -51,6 +53,13 @@ error:
 
 static void process_req_data(asft_pkt *req, asft_pkt *resp, size_t *resp_len, bool have_data)
 {
+    if (!gw.ready) {
+        asft_debug("Not ready\n");
+        *resp_len = sizeof(resp->nodata);
+        resp->nodata.cmd = ASFT_CMD_NOT_READY;
+        return;
+    }
+
     if (have_data) {
         asft_msg_rx_receive(&gw.msg_rx, be16toh(req->data.block_idx), req->data.data, gw.download_dir);
     }
@@ -66,6 +75,7 @@ static void process_req_data(asft_pkt *req, asft_pkt *resp, size_t *resp_len, bo
         resp->data.block_idx = htobe16(block_idx);
     } else {
         *resp_len = sizeof(resp->nodata);
+        resp->nodata.cmd = ASFT_CMD_NODATA;
     }
     asft_msg_rx_get_ack(&gw.msg_rx, &resp->b.ack);
 }
@@ -103,7 +113,20 @@ int asft_node_loop()
         switch (pkt_len)
         {
             case ASFT_PKT_LEN_NODATA:
-                process_req_data(&pkt, &resp, &resp_len, false);
+                switch (pkt.nodata.cmd) {
+                    case ASFT_CMD_RESET:
+                        asft_debug("Reset requested\n");
+                        gw.ready = true;
+                        resp_len = sizeof(resp.nodata);
+                        resp.nodata.cmd = ASFT_CMD_READY;
+                        break;
+                    case ASFT_CMD_NODATA:
+                        process_req_data(&pkt, &resp, &resp_len, false);
+                        break;
+                    default:
+                        asft_error("Unknown request command %u\n", pkt.nodata.cmd);
+                        break;
+                }
                 break;
             case ASFT_PKT_LEN_DATA:
                 process_req_data(&pkt, &resp, &resp_len, true);

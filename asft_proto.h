@@ -12,6 +12,14 @@
 #define ASFT_PKT_LEN_NODATA  (sizeof(struct asft_pkt_nodata))
 #define ASFT_PKT_LEN_DATA    (sizeof(struct asft_pkt_data))
 
+enum asft_cmd {
+    ASFT_CMD_RESET = 0,
+    ASFT_CMD_READY = 1,
+    ASFT_CMD_NOT_READY = 2,
+    ASFT_CMD_DATA = 3,
+    ASFT_CMD_NODATA = 4,
+};
+
 struct asft_pkt_base {
     uint8_t tag[ASFT_TAG_LEN];
     uint8_t timestamp[ASFT_TS_XMIT];
@@ -20,6 +28,7 @@ struct asft_pkt_base {
 
 struct asft_pkt_nodata {
     struct asft_pkt_base b;
+    uint8_t cmd;
 } __attribute__((packed));
 
 struct asft_pkt_data {

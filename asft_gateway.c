@@ -27,6 +27,7 @@ struct node
 
     uint64_t pause_until;
     uint32_t backoff_time;
+    bool ready;
 
     struct asft_msg_tx msg_tx;
     struct asft_msg_rx msg_rx;
@@ -66,7 +67,7 @@ static void unpause_for_download()
 
     while (n)
     {
-        if (n->pause_until > now && !n->msg_tx.msg) {
+        if (n->pause_until > now && !n->msg_tx.msg && n->ready) {
             asft_msg_tx_init(&n->msg_tx, n->download_dir);
             if (n->msg_tx.msg) {
                 reset_backoff(n);
@@ -165,18 +166,26 @@ int asft_gateway_loop()
         size_t pkt_len = 0, rx_packet_len = 0;
         bool keep_talking = false;
 
-        asft_msg_tx_init(&n->msg_tx, n->download_dir);
-        if (n->msg_tx.msg) {
-            pkt_len = sizeof(pkt.data);
+        if (n->ready) {
+            asft_msg_tx_init(&n->msg_tx, n->download_dir);
+            if (n->msg_tx.msg) {
+                pkt_len = sizeof(pkt.data);
 
-            uint16_t block_idx = 0;
-            asft_msg_tx_send(&n->msg_tx, &block_idx, pkt.data.data);
-            pkt.data.block_idx = htobe16(block_idx);
-            keep_talking = true;
+                uint16_t block_idx = 0;
+                asft_msg_tx_send(&n->msg_tx, &block_idx, pkt.data.data);
+                pkt.data.block_idx = htobe16(block_idx);
+                keep_talking = true;
+            } else {
+                pkt_len = sizeof(pkt.nodata);
+                pkt.nodata.cmd = ASFT_CMD_NODATA;
+            }
+            asft_msg_rx_get_ack(&n->msg_rx, &pkt.b.ack);
         } else {
+            asft_debug("Sending reset to '%s'\n", n->label);
             pkt_len = sizeof(pkt.nodata);
+            pkt.nodata.cmd = ASFT_CMD_RESET;
+            keep_talking = true;
         }
-        asft_msg_rx_get_ack(&n->msg_rx, &pkt.b.ack);
 
         rv = asft_encrypt_req(n->crypto_ctx, &cpkt, &pkt, pkt_len);
         if (rv) {
@@ -219,7 +228,23 @@ int asft_gateway_loop()
             switch (rx_packet_len)
             {
                 case ASFT_PKT_LEN_NODATA:
-                    process_resp_data(n, &resp, false);
+                    switch (resp.nodata.cmd) {
+                        case ASFT_CMD_READY:
+                            asft_debug("Node '%s' is ready\n", n->label);
+                            n->ready = true;
+                            keep_talking = true;
+                            break;
+                        case ASFT_CMD_NOT_READY:
+                            asft_debug("Node '%s' is not ready\n", n->label);
+                            n->ready = false;
+                            keep_talking = true;
+                            break;
+                        case ASFT_CMD_NODATA:
+                            process_resp_data(n, &resp, false);
+                            break;
+                        default:
+                            asft_error("Node '%s' invalid response command %u\n", n->label, resp.nodata.cmd);
+                    }
                     break;
                 case ASFT_PKT_LEN_DATA:
                     process_resp_data(n, &resp, true);
