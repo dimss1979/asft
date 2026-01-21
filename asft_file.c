@@ -354,3 +354,29 @@ void asft_msg_rx_get_ack(struct asft_msg_rx *rx, uint8_t *ack)
     *ack = rx->ack;
     rx->ack = DATA_ACK_NONE;
 }
+
+void asft_msg_tx_cancel(struct asft_msg_tx *tx)
+{
+    if (tx->msg) {
+        free(tx->msg);
+        tx->msg = NULL;
+    }
+    if (tx->path) {
+        free(tx->path);
+        tx->path = NULL;
+    }
+    tx->msg_len = 0;
+    tx->msg_pos = 0;
+}
+
+void asft_msg_rx_cancel(struct asft_msg_rx *rx)
+{
+    if (rx->msg) {
+        free(rx->msg);
+        rx->msg = NULL;
+    }
+    rx->msg_len = 0;
+    rx->last_block_idx = 0;
+    memset(rx->last_block, 0, ASFT_BLOCK_LEN);
+    rx->ack = DATA_ACK_NONE;
+}

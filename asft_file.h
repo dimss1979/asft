@@ -23,8 +23,10 @@ struct asft_msg_rx {
 void asft_msg_tx_init(struct asft_msg_tx *tx, char *dir);
 void asft_msg_tx_send(struct asft_msg_tx *tx, uint16_t *pkt_block_idx, uint8_t *pkt_data);
 void asft_msg_tx_ack(struct asft_msg_tx *tx, uint8_t ack);
+void asft_msg_tx_cancel(struct asft_msg_tx *tx);
 
 void asft_msg_rx_receive(struct asft_msg_rx *rx, uint16_t pkt_block_idx, uint8_t *pkt_data, char *dir);
 void asft_msg_rx_get_ack(struct asft_msg_rx *rx, uint8_t *ack);
+void asft_msg_rx_cancel(struct asft_msg_rx *rx);
 
 #endif /* _ASFT_FILE_H_ */

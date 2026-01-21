@@ -236,6 +236,8 @@ int asft_gateway_loop()
                             break;
                         case ASFT_CMD_NOT_READY:
                             asft_debug("Node '%s' is not ready\n", n->label);
+                            asft_msg_tx_cancel(&n->msg_tx);
+                            asft_msg_rx_cancel(&n->msg_rx);
                             n->ready = false;
                             keep_talking = true;
                             break;

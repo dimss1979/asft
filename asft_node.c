@@ -116,6 +116,8 @@ int asft_node_loop()
                 switch (pkt.nodata.cmd) {
                     case ASFT_CMD_RESET:
                         asft_debug("Reset requested\n");
+                        asft_msg_tx_cancel(&gw.msg_tx);
+                        asft_msg_rx_cancel(&gw.msg_rx);
                         gw.ready = true;
                         resp_len = sizeof(resp.nodata);
                         resp.nodata.cmd = ASFT_CMD_READY;
