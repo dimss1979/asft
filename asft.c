@@ -83,14 +83,6 @@ static int read_config_file(char *filename)
                 asft_error("Cannot initialize serial port on line %i\n", line_number);
                 goto error;
             }
-        } else if (!strcmp(token, "retries")) {
-            char *retries = strtok(NULL, delimiters);
-            if (!retries) {
-                asft_error("No retry count specified on line %i\n", line_number);
-                goto error;
-            }
-            uint32_t retries_num = atoi(retries);
-            asft_gateway_set_retries(retries_num);
         } else if (!strcmp(token, "retry_timeout")) {
             char *retry_timeout = strtok(NULL, delimiters);
             if (!retry_timeout) {
@@ -98,20 +90,13 @@ static int read_config_file(char *filename)
                 goto error;
             }
             asft_gateway_set_retry_timeout(atoi(retry_timeout));
-        } else if (!strcmp(token, "pause_idle")) {
-            char *pause_idle = strtok(NULL, delimiters);
-            if (!pause_idle) {
-                asft_error("No idle pause specified on line %i\n", line_number);
+        } else if (!strcmp(token, "backoff_time_max")) {
+            char *backoff_time_max = strtok(NULL, delimiters);
+            if (!backoff_time_max) {
+                asft_error("No backoff time max specified on line %i\n", line_number);
                 goto error;
             }
-            asft_gateway_set_pause_idle(atoi(pause_idle));
-        } else if (!strcmp(token, "pause_error")) {
-            char *pause_error = strtok(NULL, delimiters);
-            if (!pause_error) {
-                asft_error("No error pause specified on line %i\n", line_number);
-                goto error;
-            }
-            asft_gateway_set_pause_error(atoi(pause_error));
+            asft_gateway_set_backoff_time_max(atoi(backoff_time_max));
         } else if (!strcmp(token, "node")) {
             char *label = strtok(NULL, delimiters);
             if (!label) {

@@ -25,10 +25,8 @@ struct node
     char *label;
     struct asft_crypto_ctx *crypto_ctx;
 
-    uint32_t retry;
     uint64_t pause_until;
-    bool error;
-    bool got_response;
+    uint32_t backoff_time;
 
     struct asft_msg_tx msg_tx;
     struct asft_msg_rx msg_rx;
@@ -39,23 +37,26 @@ struct node
 static struct node *node_first = NULL;
 static unsigned int node_cnt = 0;
 
-static int retries = 5;
 static int retry_timeout = 5;
-static int pause_idle = 10;
-static int pause_error = 10;
+static uint32_t backoff_time_max = 60;
 
-static void proceed_error(struct node *n)
+static void apply_backoff(struct node *n)
 {
-    n->pause_until = 1000 * pause_error + asft_now();
-    n->error = true;
-    n->retry = 0;
+    if (n->backoff_time == 0) {
+        n->backoff_time = 1;
+    } else {
+        n->backoff_time *= 2;
+        if (n->backoff_time > backoff_time_max) {
+            n->backoff_time = backoff_time_max;
+        }
+    }
+    n->pause_until = asft_now() + n->backoff_time * 1000;
 }
 
-static void proceed_idle(struct node *n)
+static void reset_backoff(struct node *n)
 {
-    n->pause_until = 1000 * pause_idle + asft_now();
-    n->error = false;
-    n->retry = 0;
+    n->backoff_time = 0;
+    n->pause_until = 0;
 }
 
 static void unpause_for_download()
@@ -65,10 +66,10 @@ static void unpause_for_download()
 
     while (n)
     {
-        if (n->pause_until > now && !n->error) {
+        if (n->pause_until > now && !n->msg_tx.msg) {
             asft_msg_tx_init(&n->msg_tx, n->download_dir);
             if (n->msg_tx.msg) {
-                n->pause_until = 0;
+                reset_backoff(n);
             }
         }
 
@@ -89,7 +90,6 @@ static struct node *node_pick_next(struct node *cur)
             n = node_first;
 
         if (n->pause_until <= now) {
-            n->error = false;
             return n;
         }
 
@@ -127,9 +127,6 @@ error:
 
 static void process_resp_data(struct node *n, asft_pkt *resp, bool have_data)
 {
-    n->got_response = true;
-    n->retry = 0;
-
     if (have_data) {
         asft_msg_rx_receive(&n->msg_rx, be16toh(resp->data.block_idx), resp->data.data, n->upload_dir);
     }
@@ -138,9 +135,6 @@ static void process_resp_data(struct node *n, asft_pkt *resp, bool have_data)
     asft_msg_tx_ack(&n->msg_tx, ack);
 
     asft_msg_tx_init(&n->msg_tx, n->download_dir);
-    if (!n->msg_tx.msg && !have_data) {
-        proceed_idle(n);
-    }
 }
 
 int asft_gateway_loop()
@@ -169,6 +163,7 @@ int asft_gateway_loop()
         asft_pkt pkt = {0}, cpkt = {0}, resp = {0};
         asft_pkt *cresp = NULL;
         size_t pkt_len = 0, rx_packet_len = 0;
+        bool keep_talking = false;
 
         asft_msg_tx_init(&n->msg_tx, n->download_dir);
         if (n->msg_tx.msg) {
@@ -177,6 +172,7 @@ int asft_gateway_loop()
             uint16_t block_idx = 0;
             asft_msg_tx_send(&n->msg_tx, &block_idx, pkt.data.data);
             pkt.data.block_idx = htobe16(block_idx);
+            keep_talking = true;
         } else {
             pkt_len = sizeof(pkt.nodata);
         }
@@ -195,11 +191,10 @@ int asft_gateway_loop()
             asft_error("Cannot send request\n");
             return 1;
         }
-        n->retry++;
 
-        n->got_response = false;
+        bool got_response = false;
         timeout = asft_now() + retry_timeout * 1000;
-        while(timeout > asft_now() && !n->got_response) {
+        while(timeout > asft_now() && !got_response) {
             rv = asft_serial_receive((unsigned char**) &cresp, &rx_packet_len);
             if (rv < 0) {
                 asft_error("Cannot receive response\n");
@@ -219,6 +214,8 @@ int asft_gateway_loop()
                 continue;
             }
 
+            got_response = true;
+
             switch (rx_packet_len)
             {
                 case ASFT_PKT_LEN_NODATA:
@@ -226,18 +223,20 @@ int asft_gateway_loop()
                     break;
                 case ASFT_PKT_LEN_DATA:
                     process_resp_data(n, &resp, true);
+                    keep_talking = true;
                     break;
                 default:
                     asft_error("Node '%s' invalid response length %u bytes\n", n->label, rx_packet_len);
             }
         };
 
-        if (!n->got_response) {
+        if (!got_response)
             asft_debug("No response\n");
-            if (n->retry >= retries) {
-                asft_error("Node '%s' timeout\n", n->label);
-                proceed_error(n);
-            }
+
+        if (!keep_talking || !got_response) {
+            apply_backoff(n);
+        } else {
+            reset_backoff(n);
         }
     }
 
@@ -284,22 +283,12 @@ error:
     return -1;
 }
 
-void asft_gateway_set_retries(int new_retries)
-{
-    retries = new_retries;
-}
-
 void asft_gateway_set_retry_timeout(int new_timeout)
 {
     retry_timeout = new_timeout;
 }
 
-void asft_gateway_set_pause_idle(int new_pause_idle)
+void asft_gateway_set_backoff_time_max(uint32_t new_backoff_time_max)
 {
-    pause_idle = new_pause_idle;
-}
-
-void asft_gateway_set_pause_error(int new_pause_error)
-{
-    pause_error = new_pause_error;
+    backoff_time_max = new_backoff_time_max;
 }

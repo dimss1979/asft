@@ -63,10 +63,8 @@ Sample configuration file for gateway:
 debug 1
 mode gateway
 port /dev/ttyUSB0 1200
-retries 5
 retry_timeout 2
-pause_idle 10
-pause_error 10
+backoff_time_max 60
 
 node node01 password123
 #node node02 password234
@@ -172,28 +170,21 @@ You better use these if available in your system.
 Also, make sure serial port is accessible.
 In Debian, the user must be a member of "dialout" group.
 
-### retries
-
-(gateway only) Packet transmission maximum retry count.
-
-If exceeded, the node is moved to error state.
-
 ### retry_timeout
 
 (gateway only) Wait for response for specified amount of seconds.
 
 If exceeded, the packet will be retransmitted.
 
-### pause_idle
+### backoff_time_max
 
-(gateway only) Stay in idle state for specified amount of seconds.
+(gateway only) Maximum backoff time in seconds (default: 60).
 
-When there are no files to be trasferred, the node is moved to idle state.
-The node leaves idle state and proceeds to upload when idle time is over or there is a file available for download.
-
-### pause_error
-
-(gateway only) Stay in error state for specified amount of seconds.
+When a node does not respond or there is no data to transfer, the gateway will pause that node using exponential backoff:
+- Initial pause is 1 second
+- Each subsequent timeout doubles the pause time (2s, 4s, 8s, etc.)
+- Maximum pause time is limited by `backoff_time_max`
+- When a response is received and there is a data to transfer, the backoff is reset to zero
 
 ### node
 
