@@ -231,6 +231,7 @@ int asft_gateway_loop()
                     switch (resp.nodata.cmd) {
                         case ASFT_CMD_READY:
                             asft_debug("Node '%s' is ready\n", n->label);
+                            asft_crypto_set_session_timestamp(n->crypto_ctx);
                             n->ready = true;
                             keep_talking = true;
                             break;

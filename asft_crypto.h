@@ -7,6 +7,8 @@ struct asft_crypto_ctx;
 
 struct asft_crypto_ctx *asft_crypto_ctx_init(char *password);
 
+void asft_crypto_set_session_timestamp(struct asft_crypto_ctx *ctx);
+
 int asft_encrypt_req(
     struct asft_crypto_ctx *ctx,
     asft_pkt *cpkt,

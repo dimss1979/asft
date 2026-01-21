@@ -118,6 +118,7 @@ int asft_node_loop()
                         asft_debug("Reset requested\n");
                         asft_msg_tx_cancel(&gw.msg_tx);
                         asft_msg_rx_cancel(&gw.msg_rx);
+                        asft_crypto_set_session_timestamp(gw.crypto_ctx);
                         gw.ready = true;
                         resp_len = sizeof(resp.nodata);
                         resp.nodata.cmd = ASFT_CMD_READY;

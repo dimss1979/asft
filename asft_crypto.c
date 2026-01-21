@@ -25,6 +25,7 @@ _Static_assert(ASFT_TAG_LEN + 4 <= CHACHA_CTR_SIZE, "MAC tag must not overlap ch
 
 struct asft_crypto_ctx {
     uint64_t timestamp;
+    uint64_t session_timestamp;
     uint8_t request_key[CHACHA_KEY_SIZE];
     uint8_t response_key[CHACHA_KEY_SIZE];
     uint8_t msg_key[CHACHA_KEY_SIZE];
@@ -228,12 +229,14 @@ error:
     return rv;
 }
 
-static int chaSIV_F(
-    unsigned char *Ke,
-    size_t Ke_len,
-    unsigned char *K,
-    unsigned char *N,
-    size_t N_len
+static int blake2s_mac(
+    unsigned char *out,
+    size_t out_len,
+    unsigned char *key,
+    unsigned char *data,
+    size_t data_len,
+    unsigned char *additional_data,
+    size_t additional_data_len
 )
 {
     int rv = -1;
@@ -256,23 +259,30 @@ static int chaSIV_F(
     // From OpenSSL doc:
     // BLAKE2SMAC max key size == chacha20 key size (32 bytes)
 
-    if (EVP_MAC_init(ctx, K, CHACHA_KEY_SIZE, NULL) != 1) {
+    if (EVP_MAC_init(ctx, key, CHACHA_KEY_SIZE, NULL) != 1) {
         asft_error("Cannot initialize MAC\n");
         goto error;
     }
 
-    if (EVP_MAC_update(ctx, N, N_len) != 1) {
-        asft_error("Cannot update MAC of nonce\n");
+    if (EVP_MAC_update(ctx, data, data_len) != 1) {
+        asft_error("Cannot update MAC\n");
         goto error;
+    }
+
+    if (additional_data && additional_data_len > 0) {
+        if (EVP_MAC_update(ctx, additional_data, additional_data_len) != 1) {
+            asft_error("Cannot update MAC of additional data\n");
+            goto error;
+        }
     }
 
     size_t output_len = 0;
     unsigned char output[CHACHA_KEY_SIZE];
     if (EVP_MAC_final(ctx, output, &output_len, CHACHA_KEY_SIZE) != 1) {
-        asft_error("Cannot finalize MAC of nonce\n");
+        asft_error("Cannot finalize MAC\n");
         goto error;
     }
-    memcpy(Ke, output, Ke_len);
+    memcpy(out, output, out_len);
 
     rv = 0;
 
@@ -284,6 +294,17 @@ error:
         EVP_MAC_free(mac);
 
     return rv;
+}
+
+static int chaSIV_F(
+    unsigned char *Ke,
+    size_t Ke_len,
+    unsigned char *K,
+    unsigned char *N,
+    size_t N_len
+)
+{
+    return blake2s_mac(Ke, Ke_len, K, N, N_len, NULL, 0);
 }
 
 static int chaSIV_encrypt(
@@ -403,6 +424,7 @@ struct asft_crypto_ctx *asft_crypto_ctx_init(char *password)
     memset(ctx, 0, sizeof(*ctx));
 
     ctx->timestamp = asft_timestamp();
+    ctx->session_timestamp = 0;
 
     uint8_t master_key[64];
     int rv = scrypt(master_key, sizeof(master_key), password);
@@ -448,6 +470,13 @@ error:
     free(ctx);
 
     return NULL;
+}
+
+void asft_crypto_set_session_timestamp(struct asft_crypto_ctx *ctx)
+{
+    if (ctx) {
+        ctx->session_timestamp = ctx->timestamp;
+    }
 }
 
 int asft_encrypt_req(
@@ -573,7 +602,10 @@ int asft_sign_msg(
     void *msg,
     size_t msg_len
 ) {
-    if (chaSIV_F(mac, mac_len, ctx->msg_key, msg, msg_len)) {
+    union ts session_ts;
+    session_ts.be = htobe64(ctx->session_timestamp);
+
+    if (blake2s_mac(mac, mac_len, ctx->msg_key, msg, msg_len, session_ts.bytes, ASFT_TS_LEN)) {
         asft_error("Message MAC calculation failed\n");
         return 1;
     }
@@ -589,8 +621,10 @@ int asft_verify_msg(
     size_t msg_len
 ) {
     unsigned char actual_mac[CHACHA_KEY_SIZE];
+    union ts session_ts;
+    session_ts.be = htobe64(ctx->session_timestamp);
 
-    if (chaSIV_F(actual_mac, mac_len, ctx->msg_key, msg, msg_len)) {
+    if (blake2s_mac(actual_mac, mac_len, ctx->msg_key, msg, msg_len, session_ts.bytes, ASFT_TS_LEN)) {
         asft_error("Message actual MAC calculation failed\n");
         return 1;
     }
@@ -608,7 +642,10 @@ int asft_sign_msg_hdr(
     void *msg_hdr,
     size_t msg_hdr_len
 ) {
-    if (chaSIV_F(mac, mac_len, ctx->msg_hdr_key, msg_hdr, msg_hdr_len)) {
+    union ts session_ts;
+    session_ts.be = htobe64(ctx->session_timestamp);
+
+    if (blake2s_mac(mac, mac_len, ctx->msg_hdr_key, msg_hdr, msg_hdr_len, session_ts.bytes, ASFT_TS_LEN)) {
         asft_error("Message header MAC calculation failed\n");
         return 1;
     }
@@ -624,8 +661,10 @@ int asft_verify_msg_hdr(
     size_t msg_hdr_len
 ) {
     unsigned char actual_mac[CHACHA_KEY_SIZE];
+    union ts session_ts;
+    session_ts.be = htobe64(ctx->session_timestamp);
 
-    if (chaSIV_F(actual_mac, mac_len, ctx->msg_hdr_key, msg_hdr, msg_hdr_len)) {
+    if (blake2s_mac(actual_mac, mac_len, ctx->msg_hdr_key, msg_hdr, msg_hdr_len, session_ts.bytes, ASFT_TS_LEN)) {
         asft_error("Message header actual MAC calculation failed\n");
         return 1;
     }
