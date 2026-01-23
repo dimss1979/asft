@@ -51,40 +51,41 @@ error:
     return -1;
 }
 
-static void process_req_data(asft_pkt *req, asft_pkt *resp, size_t *resp_len, bool have_data)
+static void process_req_data(asft_pkt *req, struct asft_pkt_flags *req_flags, asft_pkt *resp, size_t *resp_len, struct asft_pkt_flags *resp_flags, bool have_data)
 {
     if (!gw.ready) {
         asft_debug("Not ready\n");
         *resp_len = sizeof(resp->nodata);
-        resp->nodata.cmd = ASFT_CMD_NOT_READY;
+        resp_flags->cmd = ASFT_CMD_NOT_READY;
         return;
     }
 
     if (have_data) {
-        if (asft_msg_rx_receive(&gw.msg_rx, req->data.seq, req->data.data, gw.download_dir)) {
+        if (asft_msg_rx_receive(&gw.msg_rx, req_flags->seq, req->data.data, gw.download_dir)) {
             asft_error("Error while processing data packet\n");
 
             asft_msg_tx_cancel(&gw.msg_tx);
             asft_msg_rx_cancel(&gw.msg_rx);
             gw.ready = false;
             *resp_len = sizeof(resp->nodata);
-            resp->nodata.cmd = ASFT_CMD_NOT_READY;
+            resp_flags->cmd = ASFT_CMD_NOT_READY;
             return;
         }
     }
 
-    asft_msg_tx_ack(&gw.msg_tx, req->b.ack);
+    asft_msg_tx_ack(&gw.msg_tx, req_flags->ack);
     asft_msg_tx_init(&gw.msg_tx, gw.upload_dir);
 
     if (gw.msg_tx.msg) {
         *resp_len = sizeof(resp->data);
+        resp_flags->cmd = ASFT_CMD_DATA;
 
-        asft_msg_tx_send(&gw.msg_tx, &resp->data.seq, resp->data.data);
+        asft_msg_tx_send(&gw.msg_tx, &resp_flags->seq, resp->data.data);
     } else {
         *resp_len = sizeof(resp->nodata);
-        resp->nodata.cmd = ASFT_CMD_NODATA;
+        resp_flags->cmd = ASFT_CMD_NODATA;
     }
-    asft_msg_rx_get_ack(&gw.msg_rx, &resp->b.ack);
+    asft_msg_rx_get_ack(&gw.msg_rx, &resp_flags->ack);
 }
 
 int asft_node_loop()
@@ -117,10 +118,16 @@ int asft_node_loop()
             continue;
         }
 
+        struct asft_pkt_flags resp_flags = {0};
+
         switch (pkt_len)
         {
             case ASFT_PKT_LEN_NODATA:
-                switch (pkt.nodata.cmd) {
+            case ASFT_PKT_LEN_DATA:
+                struct asft_pkt_flags req_flags;
+                asft_pkt_flags_decode(&req_flags, pkt.b.flags);
+
+                switch (req_flags.cmd) {
                     case ASFT_CMD_RESET:
                         asft_debug("Reset requested\n");
                         asft_msg_tx_cancel(&gw.msg_tx);
@@ -128,24 +135,26 @@ int asft_node_loop()
                         asft_crypto_set_session_timestamp(gw.crypto_ctx);
                         gw.ready = true;
                         resp_len = sizeof(resp.nodata);
-                        resp.nodata.cmd = ASFT_CMD_READY;
+                        resp_flags.cmd = ASFT_CMD_READY;
                         break;
                     case ASFT_CMD_NODATA:
-                        process_req_data(&pkt, &resp, &resp_len, false);
+                        process_req_data(&pkt, &req_flags, &resp, &resp_len, &resp_flags, false);
+                        break;
+                    case ASFT_CMD_DATA:
+                        process_req_data(&pkt, &req_flags, &resp, &resp_len, &resp_flags, true);
                         break;
                     default:
-                        asft_error("Unknown request command %u\n", pkt.nodata.cmd);
+                        asft_error("Unknown request command %u\n", req_flags.cmd);
                         break;
                 }
-                break;
-            case ASFT_PKT_LEN_DATA:
-                process_req_data(&pkt, &resp, &resp_len, true);
                 break;
             default:
                 asft_error("Unknown request length %u bytes\n", pkt_len);
         }
 
         if (resp_len) {
+            resp.b.flags = asft_pkt_flags_encode(&resp_flags);
+
             if (asft_encrypt_resp(gw.crypto_ctx, &cresp, &resp, resp_len)) {
                 asft_error("Response encryption failed\n");
                 return 1;

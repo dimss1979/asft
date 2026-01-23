@@ -126,10 +126,10 @@ error:
     return -1;
 }
 
-static void process_resp_data(struct node *n, asft_pkt *resp, bool have_data)
+static void process_resp_data(struct node *n, asft_pkt *resp, struct asft_pkt_flags *resp_flags, bool have_data)
 {
     if (have_data) {
-        if (asft_msg_rx_receive(&n->msg_rx, resp->data.seq, resp->data.data, n->upload_dir)) {
+        if (asft_msg_rx_receive(&n->msg_rx, resp_flags->seq, resp->data.data, n->upload_dir)) {
             asft_error("Error while processing data packet from '%s'\n", n->label);
 
             asft_msg_tx_cancel(&n->msg_tx);
@@ -139,7 +139,7 @@ static void process_resp_data(struct node *n, asft_pkt *resp, bool have_data)
         }
     }
 
-    asft_msg_tx_ack(&n->msg_tx, resp->b.ack);
+    asft_msg_tx_ack(&n->msg_tx, resp_flags->ack);
     asft_msg_tx_init(&n->msg_tx, n->download_dir);
 }
 
@@ -170,25 +170,29 @@ int asft_gateway_loop()
         asft_pkt *cresp = NULL;
         size_t pkt_len = 0, rx_packet_len = 0;
         bool keep_talking = false;
+        struct asft_pkt_flags req_flags = {0};
 
         if (n->ready) {
             asft_msg_tx_init(&n->msg_tx, n->download_dir);
             if (n->msg_tx.msg) {
                 pkt_len = sizeof(pkt.data);
+                req_flags.cmd = ASFT_CMD_DATA;
 
-                asft_msg_tx_send(&n->msg_tx, &pkt.data.seq, pkt.data.data);
+                asft_msg_tx_send(&n->msg_tx, &req_flags.seq, pkt.data.data);
                 keep_talking = true;
             } else {
                 pkt_len = sizeof(pkt.nodata);
-                pkt.nodata.cmd = ASFT_CMD_NODATA;
+                req_flags.cmd = ASFT_CMD_NODATA;
             }
-            asft_msg_rx_get_ack(&n->msg_rx, &pkt.b.ack);
+            asft_msg_rx_get_ack(&n->msg_rx, &req_flags.ack);
         } else {
             asft_debug("Sending reset to '%s'\n", n->label);
             pkt_len = sizeof(pkt.nodata);
-            pkt.nodata.cmd = ASFT_CMD_RESET;
+            req_flags.cmd = ASFT_CMD_RESET;
             keep_talking = true;
         }
+
+        pkt.b.flags = asft_pkt_flags_encode(&req_flags);
 
         rv = asft_encrypt_req(n->crypto_ctx, &cpkt, &pkt, pkt_len);
         if (rv) {
@@ -226,12 +230,16 @@ int asft_gateway_loop()
                 continue;
             }
 
-            got_response = true;
-
             switch (rx_packet_len)
             {
                 case ASFT_PKT_LEN_NODATA:
-                    switch (resp.nodata.cmd) {
+                case ASFT_PKT_LEN_DATA:
+
+                    struct asft_pkt_flags resp_flags;
+                    asft_pkt_flags_decode(&resp_flags, resp.b.flags);
+                    got_response = true;
+
+                    switch (resp_flags.cmd) {
                         case ASFT_CMD_READY:
                             asft_debug("Node '%s' is ready\n", n->label);
                             asft_crypto_set_session_timestamp(n->crypto_ctx);
@@ -248,15 +256,15 @@ int asft_gateway_loop()
                             keep_talking = true;
                             break;
                         case ASFT_CMD_NODATA:
-                            process_resp_data(n, &resp, false);
+                            process_resp_data(n, &resp, &resp_flags, false);
+                            break;
+                        case ASFT_CMD_DATA:
+                            process_resp_data(n, &resp, &resp_flags, true);
+                            keep_talking = true;
                             break;
                         default:
-                            asft_error("Node '%s' invalid response command %u\n", n->label, resp.nodata.cmd);
+                            asft_error("Node '%s' invalid response command %u\n", n->label, resp_flags.cmd);
                     }
-                    break;
-                case ASFT_PKT_LEN_DATA:
-                    process_resp_data(n, &resp, true);
-                    keep_talking = true;
                     break;
                 default:
                     asft_error("Node '%s' invalid response length %u bytes\n", n->label, rx_packet_len);
