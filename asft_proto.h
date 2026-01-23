@@ -33,7 +33,7 @@ struct asft_pkt_nodata {
 
 struct asft_pkt_data {
     struct asft_pkt_base b;
-    uint16_t block_idx;
+    uint8_t seq;
     uint8_t data[ASFT_BLOCK_LEN];
 } __attribute__((packed));
 

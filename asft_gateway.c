@@ -129,12 +129,17 @@ error:
 static void process_resp_data(struct node *n, asft_pkt *resp, bool have_data)
 {
     if (have_data) {
-        asft_msg_rx_receive(&n->msg_rx, be16toh(resp->data.block_idx), resp->data.data, n->upload_dir);
+        if (asft_msg_rx_receive(&n->msg_rx, resp->data.seq, resp->data.data, n->upload_dir)) {
+            asft_error("Error while processing data packet from '%s'\n", n->label);
+
+            asft_msg_tx_cancel(&n->msg_tx);
+            asft_msg_rx_cancel(&n->msg_rx);
+            n->ready = false;
+            return;
+        }
     }
-    uint8_t ack = resp->b.ack;
 
-    asft_msg_tx_ack(&n->msg_tx, ack);
-
+    asft_msg_tx_ack(&n->msg_tx, resp->b.ack);
     asft_msg_tx_init(&n->msg_tx, n->download_dir);
 }
 
@@ -171,9 +176,7 @@ int asft_gateway_loop()
             if (n->msg_tx.msg) {
                 pkt_len = sizeof(pkt.data);
 
-                uint16_t block_idx = 0;
-                asft_msg_tx_send(&n->msg_tx, &block_idx, pkt.data.data);
-                pkt.data.block_idx = htobe16(block_idx);
+                asft_msg_tx_send(&n->msg_tx, &pkt.data.seq, pkt.data.data);
                 keep_talking = true;
             } else {
                 pkt_len = sizeof(pkt.nodata);
@@ -210,7 +213,7 @@ int asft_gateway_loop()
                 return 1;
             }
 
-            if (!cresp)
+            if (!cresp || !rx_packet_len)
                 continue;
 
             asft_debug("Received %u bytes\n", rx_packet_len);
@@ -232,6 +235,8 @@ int asft_gateway_loop()
                         case ASFT_CMD_READY:
                             asft_debug("Node '%s' is ready\n", n->label);
                             asft_crypto_set_session_timestamp(n->crypto_ctx);
+                            asft_msg_tx_cancel(&n->msg_tx);
+                            asft_msg_rx_cancel(&n->msg_rx);
                             n->ready = true;
                             keep_talking = true;
                             break;

@@ -22,12 +22,6 @@
 #define FILE_SIZE_MAX     1000000
 #define PATH_LEN (PATH_MAX + 1)
 
-enum data_ack {
-    DATA_ACK_NONE = 0,
-    DATA_ACK_OK = 1,
-    DATA_ACK_RESTART = 2,
-};
-
 struct msg_hdr {
     uint8_t hdr_mac[4];
     uint8_t mac[4];
@@ -36,80 +30,6 @@ struct msg_hdr {
     uint8_t data[];
 } __attribute__((packed));
 
-static uint8_t rx_receive_block(struct asft_msg_rx *rx, uint16_t pkt_block_idx, uint8_t *pkt_data, char *dir)
-{
-    size_t msg_pos = pkt_block_idx * ASFT_BLOCK_LEN;
-    size_t bytes_left = rx->msg_len - msg_pos;
-    size_t block_len = ASFT_BLOCK_LEN;
-    if (bytes_left < ASFT_BLOCK_LEN) {
-        block_len = bytes_left;
-    }
-
-    memcpy(&rx->msg[msg_pos], pkt_data, block_len);
-
-    if (bytes_left <= ASFT_BLOCK_LEN) {
-        struct msg_hdr *hdr = (struct msg_hdr*) rx->msg;
-
-        if (asft_verify_msg(
-            rx->crypto_ctx,
-            hdr->mac,
-            sizeof(hdr->mac),
-            hdr->data,
-            rx->msg_len - sizeof(*hdr)
-        )) {
-            asft_error("RX MSG MAC mismatch\n");
-            return DATA_ACK_RESTART;
-        }
-
-        char filename[256] = {0};
-        memcpy(filename, hdr->data, hdr->filename_len);
-        char path_tmp[PATH_LEN] = {0};
-        char path[PATH_LEN] = {0};
-
-        sprintf(path_tmp, "%s/.tmp", dir);
-        sprintf(path, "%s/%s", dir, filename);
-        asft_info("Received file '%s'\n", path);
-
-        int fd = open(
-            path_tmp,
-            O_WRONLY | O_CREAT | O_TRUNC,
-            S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH
-        );
-        if (fd < 0) {
-            asft_error("Cannot open destination file %s\n", path_tmp);
-            return DATA_ACK_NONE;
-        }
-
-        uint8_t *buf = &hdr->data[hdr->filename_len];
-        size_t left = rx->msg_len - hdr->filename_len - sizeof(struct msg_hdr);
-
-        while (left) {
-            int rv = write(fd, buf, left);
-            if (rv < 0) {
-                if (errno == EINTR)
-                    continue;
-                asft_error("Write failed\n");
-                return DATA_ACK_NONE;
-            }
-
-            left -= rv;
-            buf += rv;
-        }
-        close(fd);
-
-        if (rename(path_tmp, path)) {
-            asft_error("Rename failed\n");
-            return DATA_ACK_NONE;
-        }
-
-        sync();
-    }
-
-    rx->last_block_idx = pkt_block_idx;
-    memcpy(rx->last_block, pkt_data, ASFT_BLOCK_LEN);
-
-    return DATA_ACK_OK;
-}
 
 void asft_msg_tx_init(struct asft_msg_tx *tx, char *dir)
 {
@@ -248,14 +168,13 @@ error:
     tx->path = NULL;
 }
 
-void asft_msg_tx_send(struct asft_msg_tx *tx, uint16_t *pkt_block_idx, uint8_t *pkt_data)
+void asft_msg_tx_send(struct asft_msg_tx *tx, uint8_t *pkt_seq, uint8_t *pkt_data)
 {
     if (!tx->msg) {
         asft_error("TX MSG not initialized but sending\n");
         return;
     }
 
-    *pkt_block_idx = tx->msg_pos / ASFT_BLOCK_LEN;
     memset(pkt_data, 0, ASFT_BLOCK_LEN);
 
     size_t bytes_left = tx->msg_len - tx->msg_pos;
@@ -264,6 +183,7 @@ void asft_msg_tx_send(struct asft_msg_tx *tx, uint16_t *pkt_block_idx, uint8_t *
         block_len = bytes_left;
 
     memcpy(pkt_data, &tx->msg[tx->msg_pos], block_len);
+    *pkt_seq = tx->seq;
 }
 
 void asft_msg_tx_ack(struct asft_msg_tx *tx, uint8_t ack)
@@ -272,40 +192,37 @@ void asft_msg_tx_ack(struct asft_msg_tx *tx, uint8_t ack)
         return;
     }
 
-    switch (ack) {
-        case DATA_ACK_NONE:
-            break;
-
-        case DATA_ACK_OK:
-            size_t bytes_left = tx->msg_len - tx->msg_pos;
-            if (bytes_left > ASFT_BLOCK_LEN) {
-                tx->msg_pos += ASFT_BLOCK_LEN;
-            } else {
-                asft_info("Sent file '%s'\n", tx->path);
-                unlink(tx->path);
-                sync();
-                free(tx->path);
-                free(tx->msg);
-                tx->path = NULL;
-                tx->msg = NULL;
-            }
-            break;
-
-        case DATA_ACK_RESTART:
-            tx->msg_pos = 0;
-            break;
-
-        default:
-            asft_error("TX MSG received invalid ack\n");
-            break;
+    if (ack != tx->seq) {
+        return;
     }
+
+    size_t bytes_left = tx->msg_len - tx->msg_pos;
+    if (bytes_left > ASFT_BLOCK_LEN) {
+        tx->msg_pos += ASFT_BLOCK_LEN;
+    } else {
+        asft_info("Sent file '%s'\n", tx->path);
+        unlink(tx->path);
+        sync();
+        free(tx->path);
+        free(tx->msg);
+        tx->path = NULL;
+        tx->msg = NULL;
+    }
+
+    tx->seq ^= 1;
 }
 
-void asft_msg_rx_receive(struct asft_msg_rx *rx, uint16_t pkt_block_idx, uint8_t *pkt_data, char *dir)
+int asft_msg_rx_receive(struct asft_msg_rx *rx, uint8_t pkt_seq, uint8_t *pkt_data, char *dir)
 {
-    if (pkt_block_idx == rx->last_block_idx && !memcmp(pkt_data, rx->last_block, ASFT_BLOCK_LEN)) {
-        rx->ack = DATA_ACK_OK;
-    } else if (pkt_block_idx == 0) {
+    int fd = -1;
+
+    if (pkt_seq == rx->ack) {
+        return 0;
+    }
+
+    rx->ack = pkt_seq;
+
+    if (!rx->msg) {
         struct msg_hdr *hdr = (struct msg_hdr*) pkt_data;
 
         if (asft_verify_msg_hdr(
@@ -316,43 +233,112 @@ void asft_msg_rx_receive(struct asft_msg_rx *rx, uint16_t pkt_block_idx, uint8_t
             sizeof(*hdr) - sizeof(hdr->hdr_mac)
         )) {
             asft_error("RX MSG header MAC mismatch\n");
-            rx->ack = DATA_ACK_RESTART;
-            return;
+            goto error;
         }
 
         size_t msg_len = be32toh(hdr->msg_len);
         size_t msg_len_max = sizeof(struct msg_hdr) + hdr->filename_len + FILE_SIZE_MAX;
         if (msg_len > msg_len_max) {
             asft_error("RX MSG is too big\n");
-            rx->ack = DATA_ACK_NONE;
-            return;
+            goto error;
         }
 
-        rx->msg_len = 0;
-        rx->last_block_idx = 0;
-        memset(rx->last_block, 0 , ASFT_BLOCK_LEN);
-        free(rx->msg);
         rx->msg = malloc(msg_len);
         if (!rx->msg) {
             asft_error("RX MSG memory allocation error\n");
-            rx->ack = DATA_ACK_NONE;
-            return;
+            goto error;
         }
         rx->msg_len = msg_len;
+        rx->msg_pos = 0;
 
-        rx->ack = rx_receive_block(rx, pkt_block_idx, pkt_data, dir);
-    } else if (rx->msg && (pkt_block_idx == rx->last_block_idx + 1)) {
-        rx->ack = rx_receive_block(rx, pkt_block_idx, pkt_data, dir);
-    } else {
-        asft_error("RX MSG out-of-order block\n");
-        rx->ack = DATA_ACK_RESTART;
+        asft_debug("Receiving file\n");
     }
+
+    size_t bytes_left = rx->msg_len - rx->msg_pos;
+    size_t block_len = ASFT_BLOCK_LEN;
+    if (bytes_left < ASFT_BLOCK_LEN) {
+        block_len = bytes_left;
+    }
+
+    memcpy(&rx->msg[rx->msg_pos], pkt_data, block_len);
+
+    if (bytes_left > ASFT_BLOCK_LEN) {
+        rx->msg_pos += ASFT_BLOCK_LEN;
+    } else {
+        struct msg_hdr *hdr = (struct msg_hdr*) rx->msg;
+
+        if (asft_verify_msg(
+            rx->crypto_ctx,
+            hdr->mac,
+            sizeof(hdr->mac),
+            hdr->data,
+            rx->msg_len - sizeof(*hdr)
+        )) {
+            asft_error("RX MSG MAC mismatch\n");
+            goto error;
+        }
+
+        char filename[256] = {0};
+        memcpy(filename, hdr->data, hdr->filename_len);
+        char path_tmp[PATH_LEN] = {0};
+        char path[PATH_LEN] = {0};
+
+        sprintf(path_tmp, "%s/.tmp", dir);
+        sprintf(path, "%s/%s", dir, filename);
+        asft_info("Received file '%s'\n", path);
+
+        int fd = open(
+            path_tmp,
+            O_WRONLY | O_CREAT | O_TRUNC,
+            S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH
+        );
+        if (fd < 0) {
+            asft_error("Cannot open destination file %s\n", path_tmp);
+            goto error;
+        }
+
+        uint8_t *buf = &hdr->data[hdr->filename_len];
+        size_t left = rx->msg_len - hdr->filename_len - sizeof(struct msg_hdr);
+
+        while (left) {
+            int rv = write(fd, buf, left);
+            if (rv < 0) {
+                if (errno == EINTR)
+                    continue;
+                asft_error("Write failed\n");
+                goto error;
+            }
+
+            left -= rv;
+            buf += rv;
+        }
+        close(fd);
+
+        if (rename(path_tmp, path)) {
+            asft_error("Rename failed\n");
+            goto error;
+        }
+
+        sync();
+
+        free(rx->msg);
+        rx->msg = NULL;
+    }
+
+    return 0;
+
+error:
+
+    if (fd >= 0) {
+        close(fd);
+    }
+
+    return 1;
 }
 
 void asft_msg_rx_get_ack(struct asft_msg_rx *rx, uint8_t *ack)
 {
     *ack = rx->ack;
-    rx->ack = DATA_ACK_NONE;
 }
 
 void asft_msg_tx_cancel(struct asft_msg_tx *tx)
@@ -367,6 +353,7 @@ void asft_msg_tx_cancel(struct asft_msg_tx *tx)
     }
     tx->msg_len = 0;
     tx->msg_pos = 0;
+    tx->seq = 1;
 }
 
 void asft_msg_rx_cancel(struct asft_msg_rx *rx)
@@ -376,7 +363,6 @@ void asft_msg_rx_cancel(struct asft_msg_rx *rx)
         rx->msg = NULL;
     }
     rx->msg_len = 0;
-    rx->last_block_idx = 0;
-    memset(rx->last_block, 0, ASFT_BLOCK_LEN);
-    rx->ack = DATA_ACK_NONE;
+    rx->msg_pos = 0;
+    rx->ack = 0;
 }

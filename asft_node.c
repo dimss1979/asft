@@ -61,18 +61,25 @@ static void process_req_data(asft_pkt *req, asft_pkt *resp, size_t *resp_len, bo
     }
 
     if (have_data) {
-        asft_msg_rx_receive(&gw.msg_rx, be16toh(req->data.block_idx), req->data.data, gw.download_dir);
+        if (asft_msg_rx_receive(&gw.msg_rx, req->data.seq, req->data.data, gw.download_dir)) {
+            asft_error("Error while processing data packet\n");
+
+            asft_msg_tx_cancel(&gw.msg_tx);
+            asft_msg_rx_cancel(&gw.msg_rx);
+            gw.ready = false;
+            *resp_len = sizeof(resp->nodata);
+            resp->nodata.cmd = ASFT_CMD_NOT_READY;
+            return;
+        }
     }
-    uint8_t ack = req->b.ack;
-    asft_msg_tx_ack(&gw.msg_tx, ack);
+
+    asft_msg_tx_ack(&gw.msg_tx, req->b.ack);
     asft_msg_tx_init(&gw.msg_tx, gw.upload_dir);
 
     if (gw.msg_tx.msg) {
         *resp_len = sizeof(resp->data);
 
-        uint16_t block_idx = 0;
-        asft_msg_tx_send(&gw.msg_tx, &block_idx, resp->data.data);
-        resp->data.block_idx = htobe16(block_idx);
+        asft_msg_tx_send(&gw.msg_tx, &resp->data.seq, resp->data.data);
     } else {
         *resp_len = sizeof(resp->nodata);
         resp->nodata.cmd = ASFT_CMD_NODATA;
