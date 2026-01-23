@@ -186,6 +186,21 @@ When a node does not respond or there is no data to transfer, the gateway will p
 - Maximum pause time is limited by `backoff_time_max`
 - When a response is received and there is a data to transfer, the backoff is reset to zero
 
+### timestamp_step
+
+Timestamp step in milliseconds (default: 1).
+
+This parameter controls the granularity of timestamps used as nonces for packet encryption.
+Increasing this value is useful in two cases:
+
+- When communication channel is extra slow and packet transmission takes more than 60 seconds
+- When you want to allow clock offset of more than 60 seconds between gateway and node
+
+For example, setting `timestamp_step 10` will make timestamps increment by 10 milliseconds instead of 1 millisecond, effectively allowing up to 600 seconds of clock offset (instead of 60 seconds with default step of 1).
+
+Timestamp step must be smaller than packet roundtrip time.
+Otherwise some packets will fail to decrypt.
+
 ### node
 
 (gateway only) Label and password for a peer node.
