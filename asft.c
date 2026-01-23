@@ -15,6 +15,7 @@
 #include "asft_node.h"
 #include "asft_gateway.h"
 #include "asft_misc.h"
+#include <time.h>
 
 typedef enum {
     OM_UNKNOWN,
@@ -104,6 +105,18 @@ static int read_config_file(char *filename)
                 goto error;
             }
             asft_set_timestamp_step(atoll(timestamp_step));
+        } else if (!strcmp(token, "serial_packet_loss")) {
+            char *packet_loss = strtok(NULL, delimiters);
+            if (!packet_loss) {
+                asft_error("No packet loss probability specified on line %i\n", line_number);
+                goto error;
+            }
+            double prob = atof(packet_loss);
+            if (prob < 0.0 || prob > 1.0) {
+                asft_error("Packet loss probability must be between 0.0 and 1.0 on line %i\n", line_number);
+                goto error;
+            }
+            asft_serial_set_packet_loss(prob);
         } else if (!strcmp(token, "node")) {
             char *label = strtok(NULL, delimiters);
             if (!label) {
@@ -158,6 +171,8 @@ int main(int argc, char **argv)
         asft_error("Usage: asft <config_file>\n");
         return 1;
     }
+
+    srand(time(NULL));
 
     if (read_config_file(argv[1])) {
         asft_error("Error while reading configuration file\n");

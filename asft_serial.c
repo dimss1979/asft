@@ -30,6 +30,8 @@ static struct {
     .fd = -1
 };
 
+static double packet_loss_probability = 0.0;
+
 static speed_t string_to_baudrate(char *baudrate_string)
 {
     switch(atoi(baudrate_string))
@@ -143,6 +145,13 @@ static void asft_serial_cleanup()
 
     memset(&p, 0, sizeof(p));
     p.fd = -1;
+}
+
+void asft_serial_set_packet_loss(double probability)
+{
+    if (probability >= 0.0 && probability <= 1.0) {
+        packet_loss_probability = probability;
+    }
 }
 
 int asft_serial_init(char *devname, char *baudrate_string, size_t pkt_len_max)
@@ -315,6 +324,14 @@ decode:
                 /* Frame received */
                 pkt_rx_len = cobs_decode(p.frame_rx_buf, p.frame_rx_len, p.pkt_rx_buf);
                 p.frame_rx_len = 0;
+
+                if (packet_loss_probability > 0.0) {
+                    double r = (double)rand() / (double)RAND_MAX;
+                    if (r < packet_loss_probability) {
+                        continue;
+                    }
+                }
+
                 *buf_ptr = p.pkt_rx_buf;
                 *len_ptr = pkt_rx_len;
                 return 1;

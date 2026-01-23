@@ -201,6 +201,15 @@ For example, setting `timestamp_step 10` will make timestamps increment by 10 mi
 Timestamp step must be smaller than packet roundtrip time.
 Otherwise some packets will fail to decrypt.
 
+### serial_packet_loss
+
+Packet loss probability in serial frame receive path (default: 0.0).
+
+This parameter accepts values from 0.0 to 1.0 and controls the probability of dropping received frames before they are reported to the caller.
+A value of 0.0 means no packet loss (default), while 1.0 means all packets are dropped.
+
+This option is for testing purposes only, to simulate unreliable communication channels.
+
 ### node
 
 (gateway only) Label and password for a peer node.
