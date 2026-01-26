@@ -217,28 +217,23 @@ int asft_gateway_loop()
                 return 1;
             }
 
-            if (!cresp || !rx_packet_len)
+            if (!cresp || rx_packet_len < sizeof(struct asft_pkt_base))
                 continue;
 
             asft_debug("Received %u bytes\n", rx_packet_len);
-
-            if (!n)
-                continue;
 
             if (asft_decrypt_resp(n->crypto_ctx, &resp, cresp, rx_packet_len)) {
                 asft_debug("Decryption failed\n");
                 continue;
             }
 
+            struct asft_pkt_flags resp_flags;
+            asft_pkt_flags_decode(&resp_flags, resp.b.flags);
+            got_response = true;
+
             switch (rx_packet_len)
             {
                 case ASFT_PKT_LEN_NODATA:
-                case ASFT_PKT_LEN_DATA:
-
-                    struct asft_pkt_flags resp_flags;
-                    asft_pkt_flags_decode(&resp_flags, resp.b.flags);
-                    got_response = true;
-
                     switch (resp_flags.cmd) {
                         case ASFT_CMD_READY:
                             asft_debug("Node '%s' is ready\n", n->label);
@@ -258,17 +253,26 @@ int asft_gateway_loop()
                         case ASFT_CMD_NODATA:
                             process_resp_data(n, &resp, &resp_flags, false);
                             break;
+                        default:
+                            got_response = false;
+                    }
+                    break;
+                case ASFT_PKT_LEN_DATA:
+                    switch (resp_flags.cmd) {
                         case ASFT_CMD_DATA:
                             process_resp_data(n, &resp, &resp_flags, true);
                             keep_talking = true;
                             break;
                         default:
-                            asft_error("Node '%s' invalid response command %u\n", n->label, resp_flags.cmd);
+                            got_response = false;
                     }
                     break;
                 default:
-                    asft_error("Node '%s' invalid response length %u bytes\n", n->label, rx_packet_len);
+                    got_response = false;
             }
+
+            if (!got_response)
+                asft_error("Node '%s' invalid response length %u command %u\n", n->label, rx_packet_len, resp_flags.cmd);
         };
 
         if (!got_response)

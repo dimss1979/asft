@@ -106,7 +106,7 @@ int asft_node_loop()
             asft_error("Cannot receive packet\n");
             return 1;
         }
-        if (!rv || !cpkt || !pkt_len) {
+        if (!rv || !cpkt || pkt_len < sizeof(struct asft_pkt_base)) {
             continue;
         }
 
@@ -118,15 +118,12 @@ int asft_node_loop()
             continue;
         }
 
-        struct asft_pkt_flags resp_flags = {0};
+        struct asft_pkt_flags resp_flags = {0}, req_flags;
+        asft_pkt_flags_decode(&req_flags, pkt.b.flags);
 
         switch (pkt_len)
         {
             case ASFT_PKT_LEN_NODATA:
-            case ASFT_PKT_LEN_DATA:
-                struct asft_pkt_flags req_flags;
-                asft_pkt_flags_decode(&req_flags, pkt.b.flags);
-
                 switch (req_flags.cmd) {
                     case ASFT_CMD_RESET:
                         asft_debug("Reset requested\n");
@@ -140,16 +137,15 @@ int asft_node_loop()
                     case ASFT_CMD_NODATA:
                         process_req_data(&pkt, &req_flags, &resp, &resp_len, &resp_flags, false);
                         break;
+                }
+                break;
+            case ASFT_PKT_LEN_DATA:
+                switch (req_flags.cmd) {
                     case ASFT_CMD_DATA:
                         process_req_data(&pkt, &req_flags, &resp, &resp_len, &resp_flags, true);
                         break;
-                    default:
-                        asft_error("Unknown request command %u\n", req_flags.cmd);
-                        break;
                 }
                 break;
-            default:
-                asft_error("Unknown request length %u bytes\n", pkt_len);
         }
 
         if (resp_len) {
@@ -166,6 +162,8 @@ int asft_node_loop()
                 asft_error("Cannot send response\n");
                 return 1;
             }
+        } else {
+            asft_error("Invalid request length %u command %u\n", pkt_len, req_flags.cmd);
         }
     }
 }
