@@ -193,12 +193,12 @@ Timestamp step in milliseconds (default: 1).
 This parameter controls the granularity of timestamps used as nonces for packet encryption.
 Increasing this value is useful in two cases:
 
-- When the communication channel is extra slow and packet transmission takes more than ~65 seconds
-- When you want to allow a clock offset of more than 65 seconds between gateway and node
+- When the communication channel is extra slow
+- When you want to allow a larger clock offset
 
-For example, setting `timestamp_step 10` will make timestamps increment by 10 milliseconds instead of 1 millisecond, effectively allowing up to ~655 seconds of clock offset (instead of ~65 seconds with default step of 1).
+By default, maximum permissible sum of data packet transmission time and clock offset is ~32.8 seconds.
 
-Timestamp step must be smaller than packet roundtrip time.
+Timestamp step must be smaller than data packet transmission time.
 Otherwise, some packets will fail to decrypt.
 
 ### serial_packet_loss

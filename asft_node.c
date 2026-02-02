@@ -44,6 +44,8 @@ static int gateway_init()
     if (!gw.crypto_ctx)
         goto error;
 
+    asft_crypto_timestamp_init(gw.crypto_ctx);
+
     return 0;
 
 error:

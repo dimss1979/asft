@@ -423,9 +423,6 @@ struct asft_crypto_ctx *asft_crypto_ctx_init(char *password)
     assert(ctx);
     memset(ctx, 0, sizeof(*ctx));
 
-    ctx->timestamp = asft_timestamp();
-    ctx->session_timestamp = 0;
-
     uint8_t master_key[64];
     int rv = scrypt(master_key, sizeof(master_key), password);
     if (rv)
@@ -472,6 +469,11 @@ error:
     return NULL;
 }
 
+void asft_crypto_timestamp_init(struct asft_crypto_ctx *ctx)
+{
+    ctx->timestamp = asft_timestamp();
+}
+
 void asft_crypto_set_session_timestamp(struct asft_crypto_ctx *ctx)
 {
     if (ctx) {
@@ -510,39 +512,37 @@ int asft_decrypt_req(
     asft_pkt *cpkt,
     size_t cpkt_len
 ) {
-    int rv = 1;
-
-    uint64_t now = asft_timestamp();
+    int64_t now = asft_timestamp();
     union ts t;
+    t.be = htobe64(now);
+    memcpy(&t.bytes[ASFT_TS_HIDE], cpkt->b.timestamp, ASFT_TS_XMIT);
+    int64_t received = be64toh(t.be);
+    int64_t diff = now - received;
+    int64_t diff_max = 1ULL << (ASFT_TS_XMIT * 8 - 1);
 
-    for (int64_t correction = -1; correction <= 1; correction++) {
-        t.be = htobe64(now + correction * (1ULL << (ASFT_TS_XMIT * 8)));
-        memcpy(&t.bytes[ASFT_TS_HIDE], cpkt->b.timestamp, ASFT_TS_XMIT);
+    int64_t correction = 0;
+    if (diff > diff_max)
+        correction = 1;
+    else if (diff < -diff_max)
+        correction = -1;
 
-        rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, ctx->request_key, t.bytes);
-        if (!rv)
-            goto decrypted;
-    }
+    int64_t corrected = received + correction * (1ULL << (ASFT_TS_XMIT * 8));
+    t.be = htobe64(corrected);
 
-    rv = 1;
-    goto error;
-
-decrypted:
+    int rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, ctx->request_key, t.bytes);
+    if (rv)
+        return 1;
 
     uint64_t timestamp_new = be64toh(t.be);
 
     if (timestamp_new <= ctx->timestamp) {
         asft_error("Replay detected\n");
-        rv = 1;
-        goto error;
+        return 1;
     }
 
     ctx->timestamp = timestamp_new;
-    rv = 0;
 
-error:
-
-    return rv;
+    return 0;
 }
 
 int asft_encrypt_resp(
