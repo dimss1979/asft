@@ -129,7 +129,7 @@ error:
 static void process_resp_data(struct node *n, asft_pkt *resp, struct asft_pkt_flags *resp_flags, bool have_data)
 {
     if (have_data) {
-        if (asft_msg_rx_receive(&n->msg_rx, resp_flags->seq, resp->data.data, n->upload_dir)) {
+        if (asft_msg_rx_receive(&n->msg_rx, resp_flags->seq, resp->data, n->upload_dir)) {
             asft_error("Error while processing data packet from '%s'\n", n->label);
 
             asft_msg_tx_cancel(&n->msg_tx);
@@ -175,24 +175,22 @@ int asft_gateway_loop()
         if (n->ready) {
             asft_msg_tx_init(&n->msg_tx, n->download_dir);
             if (n->msg_tx.msg) {
-                pkt_len = sizeof(pkt.data);
-                req_flags.cmd = ASFT_CMD_DATA;
+                pkt_len = sizeof(asft_pkt);
 
-                asft_msg_tx_send(&n->msg_tx, &req_flags.seq, pkt.data.data);
+                asft_msg_tx_send(&n->msg_tx, &req_flags.seq, pkt.data);
                 keep_talking = true;
             } else {
-                pkt_len = sizeof(pkt.nodata);
-                req_flags.cmd = ASFT_CMD_NODATA;
+                pkt_len = sizeof(asft_pkt) - ASFT_BLOCK_LEN;
             }
             asft_msg_rx_get_ack(&n->msg_rx, &req_flags.ack);
         } else {
             asft_debug("Sending reset to '%s'\n", n->label);
-            pkt_len = sizeof(pkt.nodata);
-            req_flags.cmd = ASFT_CMD_RESET;
+            pkt_len = sizeof(asft_pkt) - ASFT_BLOCK_LEN;
+            req_flags.rst = 1;
             keep_talking = true;
         }
 
-        pkt.b.flags = asft_pkt_flags_encode(&req_flags);
+        pkt.flags = asft_pkt_flags_encode(&req_flags);
 
         rv = asft_encrypt_req(n->crypto_ctx, &cpkt, &pkt, pkt_len);
         if (rv) {
@@ -217,7 +215,11 @@ int asft_gateway_loop()
                 return 1;
             }
 
-            if (!cresp || rx_packet_len < sizeof(struct asft_pkt_base))
+            if (
+                !cresp ||
+                rx_packet_len < (sizeof(asft_pkt) - ASFT_BLOCK_LEN) ||
+                rx_packet_len > sizeof(asft_pkt)
+            )
                 continue;
 
             asft_debug("Received %u bytes\n", rx_packet_len);
@@ -228,51 +230,27 @@ int asft_gateway_loop()
             }
 
             struct asft_pkt_flags resp_flags;
-            asft_pkt_flags_decode(&resp_flags, resp.b.flags);
+            asft_pkt_flags_decode(&resp_flags, resp.flags);
             got_response = true;
 
-            switch (rx_packet_len)
-            {
-                case ASFT_PKT_LEN_NODATA:
-                    switch (resp_flags.cmd) {
-                        case ASFT_CMD_READY:
-                            asft_debug("Node '%s' is ready\n", n->label);
-                            asft_crypto_set_session_timestamp(n->crypto_ctx);
-                            asft_msg_tx_cancel(&n->msg_tx);
-                            asft_msg_rx_cancel(&n->msg_rx);
-                            n->ready = true;
-                            keep_talking = true;
-                            break;
-                        case ASFT_CMD_NOT_READY:
-                            asft_debug("Node '%s' is not ready\n", n->label);
-                            asft_msg_tx_cancel(&n->msg_tx);
-                            asft_msg_rx_cancel(&n->msg_rx);
-                            n->ready = false;
-                            keep_talking = true;
-                            break;
-                        case ASFT_CMD_NODATA:
-                            process_resp_data(n, &resp, &resp_flags, false);
-                            break;
-                        default:
-                            got_response = false;
-                    }
-                    break;
-                case ASFT_PKT_LEN_DATA:
-                    switch (resp_flags.cmd) {
-                        case ASFT_CMD_DATA:
-                            process_resp_data(n, &resp, &resp_flags, true);
-                            keep_talking = true;
-                            break;
-                        default:
-                            got_response = false;
-                    }
-                    break;
-                default:
-                    got_response = false;
+            if (resp_flags.rst) {
+                asft_debug("Node '%s' is not ready\n", n->label);
+                asft_msg_tx_cancel(&n->msg_tx);
+                asft_msg_rx_cancel(&n->msg_rx);
+                n->ready = false;
+                keep_talking = true;
+            } else if (!n->ready) {
+                asft_debug("Node '%s' is ready\n", n->label);
+                asft_crypto_set_session_timestamp(n->crypto_ctx);
+                asft_msg_tx_cancel(&n->msg_tx);
+                asft_msg_rx_cancel(&n->msg_rx);
+                n->ready = true;
+            } else if (rx_packet_len == (sizeof(asft_pkt) - ASFT_BLOCK_LEN)) {
+                process_resp_data(n, &resp, &resp_flags, false);
+            } else {
+                process_resp_data(n, &resp, &resp_flags, true);
+                keep_talking = true;
             }
-
-            if (!got_response)
-                asft_error("Node '%s' invalid response length %u command %u\n", n->label, rx_packet_len, resp_flags.cmd);
         };
 
         if (!got_response)

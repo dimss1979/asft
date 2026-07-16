@@ -57,20 +57,20 @@ static void process_req_data(asft_pkt *req, struct asft_pkt_flags *req_flags, as
 {
     if (!gw.ready) {
         asft_debug("Not ready\n");
-        *resp_len = sizeof(resp->nodata);
-        resp_flags->cmd = ASFT_CMD_NOT_READY;
+        *resp_len = sizeof(asft_pkt) - ASFT_BLOCK_LEN;
+        resp_flags->rst = 1;
         return;
     }
 
     if (have_data) {
-        if (asft_msg_rx_receive(&gw.msg_rx, req_flags->seq, req->data.data, gw.download_dir)) {
+        if (asft_msg_rx_receive(&gw.msg_rx, req_flags->seq, req->data, gw.download_dir)) {
             asft_error("Error while processing data packet\n");
 
             asft_msg_tx_cancel(&gw.msg_tx);
             asft_msg_rx_cancel(&gw.msg_rx);
             gw.ready = false;
-            *resp_len = sizeof(resp->nodata);
-            resp_flags->cmd = ASFT_CMD_NOT_READY;
+            *resp_len = sizeof(asft_pkt) - ASFT_BLOCK_LEN;
+            resp_flags->rst = 1;
             return;
         }
     }
@@ -79,13 +79,11 @@ static void process_req_data(asft_pkt *req, struct asft_pkt_flags *req_flags, as
     asft_msg_tx_init(&gw.msg_tx, gw.upload_dir);
 
     if (gw.msg_tx.msg) {
-        *resp_len = sizeof(resp->data);
-        resp_flags->cmd = ASFT_CMD_DATA;
+        *resp_len = sizeof(asft_pkt);
 
-        asft_msg_tx_send(&gw.msg_tx, &resp_flags->seq, resp->data.data);
+        asft_msg_tx_send(&gw.msg_tx, &resp_flags->seq, resp->data);
     } else {
-        *resp_len = sizeof(resp->nodata);
-        resp_flags->cmd = ASFT_CMD_NODATA;
+        *resp_len = sizeof(asft_pkt) - ASFT_BLOCK_LEN;
     }
     asft_msg_rx_get_ack(&gw.msg_rx, &resp_flags->ack);
 }
@@ -108,7 +106,7 @@ int asft_node_loop()
             asft_error("Cannot receive packet\n");
             return 1;
         }
-        if (!rv || !cpkt || pkt_len < sizeof(struct asft_pkt_base)) {
+        if (!rv || !cpkt || pkt_len < (sizeof(asft_pkt) - ASFT_BLOCK_LEN) || pkt_len > sizeof(asft_pkt)) {
             continue;
         }
 
@@ -121,37 +119,23 @@ int asft_node_loop()
         }
 
         struct asft_pkt_flags resp_flags = {0}, req_flags;
-        asft_pkt_flags_decode(&req_flags, pkt.b.flags);
+        asft_pkt_flags_decode(&req_flags, pkt.flags);
 
-        switch (pkt_len)
-        {
-            case ASFT_PKT_LEN_NODATA:
-                switch (req_flags.cmd) {
-                    case ASFT_CMD_RESET:
-                        asft_debug("Reset requested\n");
-                        asft_msg_tx_cancel(&gw.msg_tx);
-                        asft_msg_rx_cancel(&gw.msg_rx);
-                        asft_crypto_set_session_timestamp(gw.crypto_ctx);
-                        gw.ready = true;
-                        resp_len = sizeof(resp.nodata);
-                        resp_flags.cmd = ASFT_CMD_READY;
-                        break;
-                    case ASFT_CMD_NODATA:
-                        process_req_data(&pkt, &req_flags, &resp, &resp_len, &resp_flags, false);
-                        break;
-                }
-                break;
-            case ASFT_PKT_LEN_DATA:
-                switch (req_flags.cmd) {
-                    case ASFT_CMD_DATA:
-                        process_req_data(&pkt, &req_flags, &resp, &resp_len, &resp_flags, true);
-                        break;
-                }
-                break;
+        if (req_flags.rst) {
+            asft_debug("Reset requested\n");
+            asft_msg_tx_cancel(&gw.msg_tx);
+            asft_msg_rx_cancel(&gw.msg_rx);
+            asft_crypto_set_session_timestamp(gw.crypto_ctx);
+            gw.ready = true;
+            resp_len = sizeof(asft_pkt) - ASFT_BLOCK_LEN;
+        } else if (pkt_len == sizeof(asft_pkt) - ASFT_BLOCK_LEN) {
+            process_req_data(&pkt, &req_flags, &resp, &resp_len, &resp_flags, false);
+        } else {
+            process_req_data(&pkt, &req_flags, &resp, &resp_len, &resp_flags, true);
         }
 
         if (resp_len) {
-            resp.b.flags = asft_pkt_flags_encode(&resp_flags);
+            resp.flags = asft_pkt_flags_encode(&resp_flags);
 
             if (asft_encrypt_resp(gw.crypto_ctx, &cresp, &resp, resp_len)) {
                 asft_error("Response encryption failed\n");
@@ -165,7 +149,7 @@ int asft_node_loop()
                 return 1;
             }
         } else {
-            asft_error("Invalid request length %u command %u\n", pkt_len, req_flags.cmd);
+            asft_error("No response. Invalid request?\n");
         }
     }
 }

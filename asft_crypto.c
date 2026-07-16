@@ -497,7 +497,7 @@ int asft_encrypt_req(
     if (rv)
         goto error;
 
-    memcpy(cpkt->b.timestamp, &t.bytes[ASFT_TS_HIDE], ASFT_TS_XMIT);
+    memcpy(cpkt->timestamp, &t.bytes[ASFT_TS_HIDE], ASFT_TS_XMIT);
 
     rv = 0;
 
@@ -515,7 +515,7 @@ int asft_decrypt_req(
     int64_t now = asft_timestamp();
     union ts t;
     t.be = htobe64(now);
-    memcpy(&t.bytes[ASFT_TS_HIDE], cpkt->b.timestamp, ASFT_TS_XMIT);
+    memcpy(&t.bytes[ASFT_TS_HIDE], cpkt->timestamp, ASFT_TS_XMIT);
     int64_t received = be64toh(t.be);
     int64_t diff = now - received;
     int64_t diff_max = 1ULL << (ASFT_TS_XMIT * 8 - 1);
@@ -564,7 +564,7 @@ int asft_encrypt_resp(
     // Fill with current time to make it look similar to request
     union ts t_fake;
     t_fake.be = htobe64(asft_timestamp());
-    memcpy(cpkt->b.timestamp, &t_fake.bytes[ASFT_TS_HIDE], ASFT_TS_XMIT);
+    memcpy(cpkt->timestamp, &t_fake.bytes[ASFT_TS_HIDE], ASFT_TS_XMIT);
 
     rv = 0;
 
