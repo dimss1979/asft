@@ -7,9 +7,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
-#include "asft_misc.h"
-
-#include "asft_serial.h"
+#include "asft.h"
 
 static struct {
     int fd;

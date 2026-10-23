@@ -9,12 +9,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
-#include "asft_proto.h"
-#include "asft_serial.h"
-#include "asft_crypto.h"
-#include "asft_node.h"
-#include "asft_gateway.h"
-#include "asft_misc.h"
+#include "asft.h"
 #include <time.h>
 
 typedef enum {

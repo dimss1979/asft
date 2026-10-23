@@ -11,13 +11,7 @@
 #include <stdlib.h>
 #include <time.h>
 
-#include "asft_proto.h"
-#include "asft_crypto.h"
-#include "asft_serial.h"
-#include "asft_misc.h"
-#include "asft_file.h"
-
-#include "asft_gateway.h"
+#include "asft.h"
 
 struct node
 {

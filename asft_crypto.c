@@ -13,10 +13,7 @@
 #include <assert.h>
 #include <stdbool.h>
 
-#include "asft_proto.h"
-#include "asft_misc.h"
-
-#include "asft_crypto.h"
+#include "asft.h"
 
 #define CHACHA_KEY_SIZE 32
 #define CHACHA_CTR_SIZE 16

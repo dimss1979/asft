@@ -14,10 +14,7 @@
 #include <errno.h>
 #include <stdbool.h>
 
-#include "asft_misc.h"
-#include "asft_crypto.h"
-
-#include "asft_file.h"
+#include "asft.h"
 
 #define FILE_SIZE_MAX     1000000
 #define PATH_LEN (PATH_MAX + 1)

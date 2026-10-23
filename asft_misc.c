@@ -2,7 +2,7 @@
 #include <time.h>
 #include <stdarg.h>
 
-#include "asft_misc.h"
+#include "asft.h"
 
 static unsigned int debug = 0;
 static uint64_t timestamp_step = 1;
