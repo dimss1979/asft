@@ -6,6 +6,7 @@
 #include <sys/file.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <time.h>
 
 #include "asft.h"
 
@@ -24,6 +25,8 @@ static struct {
     unsigned char *frame_rx_buf;
     size_t frame_rx_len;
     size_t frame_rx_len_max;
+
+    struct timespec rx_time;
 } p = {
     .fd = -1
 };
@@ -281,6 +284,11 @@ int asft_serial_send(unsigned char *pkt, size_t pkt_len)
     return 0;
 }
 
+void asft_serial_rx_time(struct timespec *ts)
+{
+    *ts = p.rx_time;
+}
+
 int asft_serial_receive(unsigned char **buf_ptr, size_t *len_ptr)
 {
     bool had_read = false;
@@ -309,6 +317,7 @@ again:
         asft_serial_cleanup();
         return -EIO;
     }
+    clock_gettime(CLOCK_REALTIME, &p.rx_time);
     p.bytes_remaining = p.bytes_read;
 
 decode:

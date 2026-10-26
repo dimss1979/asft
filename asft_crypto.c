@@ -478,6 +478,11 @@ void asft_crypto_set_session_timestamp(struct asft_crypto_ctx *ctx)
     }
 }
 
+uint64_t asft_crypto_last_rx_timestamp(struct asft_crypto_ctx *ctx)
+{
+    return ctx->timestamp;
+}
+
 int asft_encrypt_req(
     struct asft_crypto_ctx *ctx,
     asft_pkt *cpkt,

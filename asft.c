@@ -100,6 +100,16 @@ static int read_config_file(char *filename)
                 goto error;
             }
             asft_set_timestamp_step(atoll(timestamp_step));
+        } else if (!strcmp(token, "time_sync_socket")) {
+            char *path = strtok(NULL, delimiters);
+            if (!path) {
+                asft_error("No time sync socket path specified on line %i\n", line_number);
+                goto error;
+            }
+            if (asft_timesync_set_socket(path)) {
+                asft_error("Cannot set time sync socket on line %i\n", line_number);
+                goto error;
+            }
         } else if (!strcmp(token, "serial_packet_loss")) {
             char *packet_loss = strtok(NULL, delimiters);
             if (!packet_loss) {
@@ -171,6 +181,11 @@ int main(int argc, char **argv)
 
     if (read_config_file(argv[1])) {
         asft_error("Error while reading configuration file\n");
+        return 1;
+    }
+
+    if (op_mode == OM_GATEWAY && asft_timesync_enabled()) {
+        asft_error("time_sync_socket is a node-only option\n");
         return 1;
     }
 

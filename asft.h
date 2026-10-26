@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <time.h>
 
 /* proto */
 
@@ -51,6 +52,13 @@ void asft_set_debug(unsigned int d);
 void asft_set_timestamp_step(uint64_t step);
 uint64_t asft_now(void);
 uint64_t asft_timestamp(void);
+uint64_t asft_timestamp_to_ms(uint64_t timestamp);
+
+/* time sync */
+
+int asft_timesync_set_socket(char *path);
+int asft_timesync_enabled(void);
+void asft_timesync_sample(uint64_t timestamp_ms, const struct timespec *rx_time);
 
 /* serial */
 
@@ -58,6 +66,7 @@ int asft_serial_init(char *devname, char *baudrate_string, size_t pkt_len_max);
 int asft_serial_send(unsigned char *buf, size_t len);
 int asft_serial_receive(unsigned char **buf_ptr, size_t *len_ptr);
 void asft_serial_set_packet_loss(double probability);
+void asft_serial_rx_time(struct timespec *ts);
 
 /* crypto */
 
@@ -65,6 +74,7 @@ struct asft_crypto_ctx;
 
 struct asft_crypto_ctx *asft_crypto_ctx_init(char *password);
 void asft_crypto_timestamp_init(struct asft_crypto_ctx *ctx);
+uint64_t asft_crypto_last_rx_timestamp(struct asft_crypto_ctx *ctx);
 
 void asft_crypto_set_session_timestamp(struct asft_crypto_ctx *ctx);
 

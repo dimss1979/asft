@@ -112,6 +112,16 @@ int asft_node_loop()
             continue;
         }
 
+        if (pkt_len == sizeof(asft_pkt) - ASFT_BLOCK_LEN) {
+            struct timespec rx_time;
+
+            asft_serial_rx_time(&rx_time);
+            asft_timesync_sample(
+                asft_timestamp_to_ms(asft_crypto_last_rx_timestamp(gw.crypto_ctx)),
+                &rx_time
+            );
+        }
+
         struct asft_pkt_flags resp_flags = {0}, req_flags;
         asft_pkt_flags_decode(&req_flags, pkt.flags);
 
