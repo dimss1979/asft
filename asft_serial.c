@@ -166,7 +166,7 @@ int asft_serial_init(char *devname, char *baudrate_string, size_t pkt_len_max)
     p.frame_rx_len_max = pkt_len_max + ((pkt_len_max / 254) + 1) /* overhead */;
     p.frame_tx_len_max = p.frame_rx_len_max + 2 /* start and stop delimiter */;
 
-    p.pkt_rx_buf = malloc(pkt_len_max + 1 /* checksum */);
+    p.pkt_rx_buf = malloc(p.frame_rx_len_max + 1);
     if (!p.pkt_rx_buf) {
         asft_error("Serial input packet buffer allocation failed\n");
         goto error;
@@ -179,7 +179,7 @@ int asft_serial_init(char *devname, char *baudrate_string, size_t pkt_len_max)
         goto error;
     }
 
-    p.frame_rx_buf = malloc(p.frame_rx_len_max);
+    p.frame_rx_buf = malloc(p.frame_rx_len_max + 1);
     if (!p.frame_rx_buf) {
         asft_error("Serial input frame buffer allocation failed\n");
         goto error;
@@ -343,7 +343,7 @@ decode:
                 *len_ptr = pkt_rx_len;
                 return 1;
             }
-        } else if (p.frame_rx_len > p.frame_rx_len_max) {
+        } else if (p.frame_rx_len >= p.frame_rx_len_max) {
             asft_debug("Received frame too long\n");
             p.frame_rx_len = 0;
         } else {
