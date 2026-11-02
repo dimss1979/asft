@@ -82,10 +82,10 @@ void asft_msg_tx_init(struct asft_msg_tx *tx, char *dir)
             continue;
         if (stat64(path_tmp, &s))
             continue;
-        file_len = s.st_size;
-        if (file_len > FILE_SIZE_MAX)
+        size_t cur_file_len = s.st_size;
+        if (cur_file_len > FILE_SIZE_MAX)
             continue;
-        filename_len = strlen(e->d_name);
+        size_t cur_filename_len = strlen(e->d_name);
         if (lstat64(path_tmp, &ls))
             continue;
         if (
@@ -103,6 +103,9 @@ void asft_msg_tx_init(struct asft_msg_tx *tx, char *dir)
 
         ctime_min = ls.st_ctim;
         ctime_min_valid = true;
+        /* Record metadata only for the entry actually selected. */
+        file_len = cur_file_len;
+        filename_len = cur_filename_len;
         memcpy(path, path_tmp, PATH_LEN);
         memcpy(filename, e->d_name, filename_len);
     }
@@ -139,11 +142,15 @@ void asft_msg_tx_init(struct asft_msg_tx *tx, char *dir)
     size_t bytes_left = file_len;
     uint8_t *msg_pos = &hdr->data[filename_len];
     while (bytes_left) {
-        size_t bytes_read = read(fd, msg_pos, bytes_left);
-        if (bytes_read <= 0) {
+        ssize_t bytes_read = read(fd, msg_pos, bytes_left);
+        if (bytes_read < 0) {
             if (errno == EINTR)
                 continue;
             asft_error("TX MSG read failed\n");
+            goto error;
+        }
+        if (bytes_read == 0) {
+            asft_error("TX MSG unexpected end of file\n");
             goto error;
         }
         msg_pos += bytes_read;
