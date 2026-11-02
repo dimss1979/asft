@@ -49,6 +49,7 @@ static int gateway_init(char *network_id)
 
     asft_crypto_timestamp_init(gw.crypto_ctx);
 
+    explicit_bzero(gw.password, strlen(gw.password));
     free(gw.password);
     gw.password = NULL;
 
@@ -181,12 +182,18 @@ int asft_node_set_gateway(char *label, char *password)
     char *new_password = strdup(password);
     if (!new_label || !new_password) {
         free(new_label);
-        free(new_password);
+        if (new_password) {
+            explicit_bzero(new_password, strlen(new_password));
+            free(new_password);
+        }
         goto error;
     }
 
     free(gw.label);
-    free(gw.password);
+    if (gw.password) {
+        explicit_bzero(gw.password, strlen(gw.password));
+        free(gw.password);
+    }
 
     gw.label = new_label;
     gw.password = new_password;

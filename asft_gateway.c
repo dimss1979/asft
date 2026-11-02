@@ -118,6 +118,7 @@ static int nodes_init(char *network_id)
         n->msg_tx.crypto_ctx = n->crypto_ctx;
         n->msg_rx.crypto_ctx = n->crypto_ctx;
 
+        explicit_bzero(n->password, strlen(n->password));
         free(n->password);
         n->password = NULL;
 
@@ -303,7 +304,10 @@ error:
 
     if (new) {
         free(new->label);
-        free(new->password);
+        if (new->password) {
+            explicit_bzero(new->password, strlen(new->password));
+            free(new->password);
+        }
         free(new);
     }
 

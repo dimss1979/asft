@@ -417,7 +417,7 @@ struct asft_crypto_ctx *asft_crypto_ctx_init(char *password, char *network_id)
     assert(ctx);
     memset(ctx, 0, sizeof(*ctx));
 
-    uint8_t master_key[64];
+    uint8_t master_key[64] = {0};
     int rv = scrypt(master_key, sizeof(master_key), password, network_id);
     if (rv)
         goto error;
@@ -454,13 +454,19 @@ struct asft_crypto_ctx *asft_crypto_ctx_init(char *password, char *network_id)
     if (rv)
         goto error;
 
-    return ctx;
+    rv = 0;
 
 error:
 
-    free(ctx);
+    explicit_bzero(master_key, sizeof(master_key));
 
-    return NULL;
+    if (rv) {
+        explicit_bzero(ctx, sizeof(*ctx));
+        free(ctx);
+        return NULL;
+    }
+
+    return ctx;
 }
 
 void asft_crypto_timestamp_init(struct asft_crypto_ctx *ctx)
