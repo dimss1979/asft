@@ -63,6 +63,7 @@ Sample configuration file for gateway:
 ```
 debug 1
 mode gateway
+network_id 4b7d9a1c8e2f6350a9c4d1e7b8f2036a
 port /dev/ttyUSB0 1200
 retry_timeout 2
 backoff_time_max 60
@@ -77,6 +78,7 @@ Sample configuration file for node01:
 ```
 debug 1
 mode node
+network_id 4b7d9a1c8e2f6350a9c4d1e7b8f2036a
 port /dev/ttyUSB1 1200
 gateway gw password123
 ```
@@ -144,6 +146,24 @@ Set to '1' for more verbose logging.
 ### mode
 
 Either 'gateway' or 'node'.
+
+### network_id
+
+Salt used for password-based key derivation. This option is mandatory.
+
+It must be identical on the gateway and every node. Use a long random value,
+for example:
+
+```
+openssl rand -hex 16
+```
+
+`network_id` is not a secret, but it should be unique to your network. It
+prevents identical passwords on different networks from producing the same
+keys and makes precomputed password tables useless. The value must not
+contain whitespace.
+
+Changing `network_id` changes all derived keys, so update all peers together.
 
 ### port
 
@@ -280,6 +300,10 @@ Both directories must be created in advance in the working directory of `asft`.
 Each node is addressed by its password only.
 Please use long, unique, hard to guess passwords.
 Protect `asft` configuration files.
+
+The `network_id` value is used as the salt for password-based key derivation.
+It is not a secret, but it must be identical on all peers and unique to the
+network.
 
 By default, gateway and nodes must maintain clock synchronization within a few seconds.
 

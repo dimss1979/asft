@@ -85,7 +85,7 @@ void asft_serial_rx_time(struct timespec *ts);
 
 struct asft_crypto_ctx;
 
-struct asft_crypto_ctx *asft_crypto_ctx_init(char *password);
+struct asft_crypto_ctx *asft_crypto_ctx_init(char *password, char *network_id);
 void asft_crypto_timestamp_init(struct asft_crypto_ctx *ctx);
 uint64_t asft_crypto_last_rx_timestamp(struct asft_crypto_ctx *ctx);
 
@@ -181,12 +181,12 @@ void asft_msg_rx_cancel(struct asft_msg_rx *rx);
 
 /* node */
 
-int asft_node_loop(void);
+int asft_node_loop(char *network_id);
 int asft_node_set_gateway(char *label, char *password);
 
 /* gateway */
 
-int asft_gateway_loop(void);
+int asft_gateway_loop(char *network_id);
 int asft_gateway_add_node(char *label, char *password);
 void asft_gateway_set_retry_timeout(int new_timeout);
 void asft_gateway_set_backoff_time_max(uint32_t new_backoff_time_max);

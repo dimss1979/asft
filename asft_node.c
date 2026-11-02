@@ -14,6 +14,7 @@
 static struct gateway
 {
     char *label;
+    char *password;
     struct asft_crypto_ctx *crypto_ctx;
 
     bool ready;
@@ -24,10 +25,14 @@ static struct gateway
     char *download_dir;
 } gw = { 0 };
 
-static int gateway_init()
+static int gateway_init(char *network_id)
 {
     if (!gw.label) {
         asft_error("Gateway not specified\n");
+        goto error;
+    }
+    if (!gw.password) {
+        asft_error("Gateway password not specified\n");
         goto error;
     }
     if (asprintf(&gw.upload_dir, "to_%s", gw.label) < 0)
@@ -35,10 +40,17 @@ static int gateway_init()
     if (asprintf(&gw.download_dir, "from_%s", gw.label) < 0)
         goto error;
 
+    gw.crypto_ctx = asft_crypto_ctx_init(gw.password, network_id);
     if (!gw.crypto_ctx)
         goto error;
 
+    gw.msg_tx.crypto_ctx = gw.crypto_ctx;
+    gw.msg_rx.crypto_ctx = gw.crypto_ctx;
+
     asft_crypto_timestamp_init(gw.crypto_ctx);
+
+    free(gw.password);
+    gw.password = NULL;
 
     return 0;
 
@@ -82,9 +94,9 @@ static void process_req_data(asft_pkt *req, struct asft_pkt_flags *req_flags, as
     asft_msg_rx_get_ack(&gw.msg_rx, &resp_flags->ack);
 }
 
-int asft_node_loop()
+int asft_node_loop(char *network_id)
 {
-    if (gateway_init()) {
+    if (gateway_init(network_id)) {
         asft_error("Initialization failed\n");
         return 1;
     }
@@ -165,22 +177,23 @@ int asft_node_set_gateway(char *label, char *password)
         goto error;
     }
 
-    free(gw.label);
-
-    gw.label = strdup(label);
-    gw.crypto_ctx = asft_crypto_ctx_init(password);
-    gw.msg_tx.crypto_ctx = gw.crypto_ctx;
-    gw.msg_rx.crypto_ctx = gw.crypto_ctx;
-
-    if (!gw.crypto_ctx || !gw.label)
+    char *new_label = strdup(label);
+    char *new_password = strdup(password);
+    if (!new_label || !new_password) {
+        free(new_label);
+        free(new_password);
         goto error;
+    }
+
+    free(gw.label);
+    free(gw.password);
+
+    gw.label = new_label;
+    gw.password = new_password;
 
     return 0;
 
 error:
-
-    free(gw.label);
-    gw.label = NULL;
 
     return -1;
 }

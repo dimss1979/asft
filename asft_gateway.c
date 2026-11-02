@@ -17,6 +17,7 @@ struct node
 {
     struct node *next;
     char *label;
+    char *password;
     struct asft_crypto_ctx *crypto_ctx;
 
     uint64_t pause_until;
@@ -94,7 +95,7 @@ static struct node *node_pick_next(struct node *cur)
     return NULL;
 }
 
-static int nodes_init()
+static int nodes_init(char *network_id)
 {
     struct node *n;
 
@@ -109,6 +110,16 @@ static int nodes_init()
             goto error;
         if (asprintf(&n->download_dir, "to_%s", n->label) < 0)
             goto error;
+
+        n->crypto_ctx = asft_crypto_ctx_init(n->password, network_id);
+        if (!n->crypto_ctx)
+            goto error;
+
+        n->msg_tx.crypto_ctx = n->crypto_ctx;
+        n->msg_rx.crypto_ctx = n->crypto_ctx;
+
+        free(n->password);
+        n->password = NULL;
 
         n = n->next;
     }
@@ -137,13 +148,13 @@ static void process_resp_data(struct node *n, asft_pkt *resp, struct asft_pkt_fl
     asft_msg_tx_init(&n->msg_tx, n->download_dir);
 }
 
-int asft_gateway_loop()
+int asft_gateway_loop(char *network_id)
 {
     int rv;
     struct node *n = NULL;
     uint64_t timeout;
 
-    if (nodes_init()) {
+    if (nodes_init(network_id)) {
         asft_error("Initialization failed\n");
         return 1;
     }
@@ -278,12 +289,10 @@ int asft_gateway_add_node(char *label, char *password)
     if (!new->label)
         goto error;
 
-    new->crypto_ctx = asft_crypto_ctx_init(password);
-    if (!new->crypto_ctx)
+    new->password = strdup(password);
+    if (!new->password)
         goto error;
 
-    new->msg_tx.crypto_ctx = new->crypto_ctx;
-    new->msg_rx.crypto_ctx = new->crypto_ctx;
     new->next = node_first;
     node_first = new;
     node_cnt++;
@@ -294,6 +303,7 @@ error:
 
     if (new) {
         free(new->label);
+        free(new->password);
         free(new);
     }
 

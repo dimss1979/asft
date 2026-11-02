@@ -19,6 +19,7 @@ typedef enum {
 } op_mode_t;
 
 static op_mode_t op_mode = OM_UNKNOWN;
+static char *network_id = NULL;
 
 static int read_config_file(char *filename)
 {
@@ -61,6 +62,21 @@ static int read_config_file(char *filename)
                 op_mode = OM_NODE;
             } else {
                 asft_error("Invalid mode on line %i: %s\n", line_number, mode);
+                goto error;
+            }
+        } else if (!strcmp(token, "network_id")) {
+            char *id = strtok(NULL, delimiters);
+            if (!id) {
+                asft_error("No network_id specified on line %i\n", line_number);
+                goto error;
+            }
+            if (network_id) {
+                asft_error("network_id specified more than once on line %i\n", line_number);
+                goto error;
+            }
+            network_id = strdup(id);
+            if (!network_id) {
+                asft_error("Cannot allocate network_id on line %i\n", line_number);
                 goto error;
             }
         } else if (!strcmp(token, "port")) {
@@ -158,9 +174,19 @@ static int read_config_file(char *filename)
         }
     }
 
+    if (!network_id) {
+        asft_error("network_id not specified\n");
+        goto error;
+    }
+
     rv = 0;
 
 error:
+
+    if (rv) {
+        free(network_id);
+        network_id = NULL;
+    }
 
     if (f)
         fclose(f);
@@ -186,20 +212,23 @@ int main(int argc, char **argv)
 
     if (op_mode == OM_GATEWAY && asft_timesync_enabled()) {
         asft_error("time_sync_socket is a node-only option\n");
+        free(network_id);
         return 1;
     }
 
     switch (op_mode) {
         case OM_GATEWAY:
-            rv = asft_gateway_loop();
+            rv = asft_gateway_loop(network_id);
             break;
         case OM_NODE:
-            rv = asft_node_loop();
+            rv = asft_node_loop(network_id);
             break;
         default:
             asft_error("Operation mode not specified\n");
+            free(network_id);
             return 1;
     }
 
+    free(network_id);
     return !!rv;
 }

@@ -37,22 +37,19 @@ union ts {
 static int scrypt(
     void *key,
     size_t key_len,
-    void *password
+    void *password,
+    void *salt
 ) {
     int rv = 1;
     EVP_KDF *kdf = NULL;
     EVP_KDF_CTX *kctx = NULL;
     OSSL_PARAM params[6], *p = params;
 
-    // Random
-    char salt[] = "QEf6AJSdvz4RH+mswss1KdaUF/F0UgIhLDvXeljxvR5Vt7TcV0PCPVCxvKJcY/DtAMUONzgSNc1p"
-        "WxWRBC0lB8fmRVHoMVz4gjtgJ0TDESGz4/vKl+INTuuQ1A5iBGz3byHekaZRBtKMhZO1Y7a/VGQK"
-        "7ZsBBArBkMYJpJ5NphE=";
     uint64_t param_N = 1024;
     uint32_t param_r = 8;
     uint32_t param_p = 16;
 
-    if (!key || !key_len || !password)
+    if (!key || !key_len || !password || !salt)
         goto error;
 
     kdf = EVP_KDF_fetch(NULL, "SCRYPT", NULL);
@@ -412,7 +409,7 @@ error:
     return rv;
 }
 
-struct asft_crypto_ctx *asft_crypto_ctx_init(char *password)
+struct asft_crypto_ctx *asft_crypto_ctx_init(char *password, char *network_id)
 {
     struct asft_crypto_ctx *ctx;
 
@@ -421,7 +418,7 @@ struct asft_crypto_ctx *asft_crypto_ctx_init(char *password)
     memset(ctx, 0, sizeof(*ctx));
 
     uint8_t master_key[64];
-    int rv = scrypt(master_key, sizeof(master_key), password);
+    int rv = scrypt(master_key, sizeof(master_key), password, network_id);
     if (rv)
         goto error;
 
