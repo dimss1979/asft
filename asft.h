@@ -7,8 +7,21 @@
 
 /* proto */
 
-#define ASFT_TAG_LEN    4
-#define ASFT_TS_LEN     sizeof(uint64_t)
+/*
+ * Per-packet tag and per-message MAC lengths.
+ *
+ * The packet tag is deliberately short to limit per-packet overhead on
+ * severely constrained links; it bounds single-packet forgery and is also
+ * used as the ChaCha20 SIV nonce, so packets sharing a timestamp must not
+ * produce colliding tags.
+ *
+ * The file header and body MACs are sent once per file, so they are longer
+ * and provide the end-to-end integrity guarantee independently of the
+ * short per-packet tag.
+ */
+#define ASFT_TAG_LEN     5
+#define ASFT_MSG_MAC_LEN 8
+#define ASFT_TS_LEN      sizeof(uint64_t)
 #define ASFT_TS_XMIT    2
 #define ASFT_TS_HIDE    (ASFT_TS_LEN - ASFT_TS_XMIT)
 #define ASFT_BLOCK_LEN  100

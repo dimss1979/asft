@@ -20,8 +20,8 @@
 #define PATH_LEN (PATH_MAX + 1)
 
 struct msg_hdr {
-    uint8_t hdr_mac[4];
-    uint8_t mac[4];
+    uint8_t hdr_mac[ASFT_MSG_MAC_LEN];
+    uint8_t mac[ASFT_MSG_MAC_LEN];
     uint32_t msg_len;
     uint8_t filename_len;
     uint8_t data[];
