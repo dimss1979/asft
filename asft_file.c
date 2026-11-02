@@ -257,7 +257,12 @@ int asft_msg_rx_receive(struct asft_msg_rx *rx, uint8_t pkt_seq, uint8_t *pkt_da
         }
 
         size_t msg_len = be32toh(hdr->msg_len);
+        size_t msg_len_min = sizeof(struct msg_hdr) + hdr->filename_len;
         size_t msg_len_max = sizeof(struct msg_hdr) + hdr->filename_len + FILE_SIZE_MAX;
+        if (msg_len < msg_len_min) {
+            asft_error("RX MSG is too small\n");
+            goto error;
+        }
         if (msg_len > msg_len_max) {
             asft_error("RX MSG is too big\n");
             goto error;
