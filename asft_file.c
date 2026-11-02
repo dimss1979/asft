@@ -27,6 +27,29 @@ struct msg_hdr {
     uint8_t data[];
 } __attribute__((packed));
 
+static bool filename_is_safe(const char *name, size_t len)
+{
+    if (len == 0 || len > 255)
+        return false;
+
+    /* Reject "." and ".." to prevent directory traversal. */
+    if ((len == 1 && name[0] == '.') ||
+        (len == 2 && name[0] == '.' && name[1] == '.'))
+        return false;
+
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = name[i];
+
+        /* No path separators, control characters or other metadata. */
+        if (c == '/' || c == '\\')
+            return false;
+        if (c < 0x20 || c == 0x7f)
+            return false;
+    }
+
+    return true;
+}
+
 
 void asft_msg_tx_init(struct asft_msg_tx *tx, char *dir)
 {
@@ -277,11 +300,25 @@ int asft_msg_rx_receive(struct asft_msg_rx *rx, uint8_t pkt_seq, uint8_t *pkt_da
 
         char filename[256] = {0};
         memcpy(filename, hdr->data, hdr->filename_len);
+
+        if (!filename_is_safe(filename, hdr->filename_len)) {
+            asft_error("RX MSG has an invalid filename\n");
+            goto error;
+        }
+
         char path_tmp[PATH_LEN] = {0};
         char path[PATH_LEN] = {0};
 
-        sprintf(path_tmp, "%s/.tmp", dir);
-        sprintf(path, "%s/%s", dir, filename);
+        int path_len = snprintf(path_tmp, sizeof(path_tmp), "%s/.tmp", dir);
+        if (path_len < 0 || (size_t) path_len >= sizeof(path_tmp)) {
+            asft_error("Destination path is too long\n");
+            goto error;
+        }
+        path_len = snprintf(path, sizeof(path), "%s/%s", dir, filename);
+        if (path_len < 0 || (size_t) path_len >= sizeof(path)) {
+            asft_error("Destination path is too long\n");
+            goto error;
+        }
         asft_info("Received file '%s'\n", path);
 
         int fd = open(
