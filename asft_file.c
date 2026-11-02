@@ -316,7 +316,7 @@ int asft_msg_rx_receive(struct asft_msg_rx *rx, uint8_t pkt_seq, uint8_t *pkt_da
         char path_tmp[PATH_LEN] = {0};
         char path[PATH_LEN] = {0};
 
-        int path_len = snprintf(path_tmp, sizeof(path_tmp), "%s/.tmp", dir);
+        int path_len = snprintf(path_tmp, sizeof(path_tmp), "%s/.asft-XXXXXX", dir);
         if (path_len < 0 || (size_t) path_len >= sizeof(path_tmp)) {
             asft_error("Destination path is too long\n");
             goto error;
@@ -328,13 +328,12 @@ int asft_msg_rx_receive(struct asft_msg_rx *rx, uint8_t pkt_seq, uint8_t *pkt_da
         }
         asft_info("Received file '%s'\n", path);
 
-        fd = open(
-            path_tmp,
-            O_WRONLY | O_CREAT | O_TRUNC,
-            S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH
-        );
+        /* mkstemp() creates the file with O_EXCL and mode 0600 in the
+         * destination directory, avoiding symlink attacks and keeping
+         * the data private until it is renamed into place. */
+        fd = mkstemp(path_tmp);
         if (fd < 0) {
-            asft_error("Cannot open destination file %s\n", path_tmp);
+            asft_error("Cannot create destination file %s\n", path_tmp);
             goto error;
         }
 
@@ -342,22 +341,34 @@ int asft_msg_rx_receive(struct asft_msg_rx *rx, uint8_t pkt_seq, uint8_t *pkt_da
         size_t left = rx->msg_len - hdr->filename_len - sizeof(struct msg_hdr);
 
         while (left) {
-            int rv = write(fd, buf, left);
+            ssize_t rv = write(fd, buf, left);
             if (rv < 0) {
                 if (errno == EINTR)
                     continue;
                 asft_error("Write failed\n");
+                unlink(path_tmp);
+                goto error;
+            }
+            if (rv == 0) {
+                asft_error("Write failed\n");
+                unlink(path_tmp);
                 goto error;
             }
 
             left -= rv;
             buf += rv;
         }
-        close(fd);
+        if (close(fd) < 0) {
+            asft_error("Close failed\n");
+            fd = -1;
+            unlink(path_tmp);
+            goto error;
+        }
         fd = -1;
 
         if (rename(path_tmp, path)) {
             asft_error("Rename failed\n");
+            unlink(path_tmp);
             goto error;
         }
 
