@@ -53,6 +53,8 @@ static bool filename_is_safe(const char *name, size_t len)
 
 void asft_msg_tx_init(struct asft_msg_tx *tx, char *dir)
 {
+    int fd = -1;
+
     if (tx->msg)
         return;
 
@@ -128,7 +130,7 @@ void asft_msg_tx_init(struct asft_msg_tx *tx, char *dir)
     tx->msg_pos = 0;
     memcpy(hdr->data, filename, filename_len);
 
-    int fd = open(path, O_RDONLY, 0);
+    fd = open(path, O_RDONLY, 0);
     if (fd < 0) {
         asft_error("Cannot open TX MSG input file\n");
         goto error;
@@ -326,7 +328,7 @@ int asft_msg_rx_receive(struct asft_msg_rx *rx, uint8_t pkt_seq, uint8_t *pkt_da
         }
         asft_info("Received file '%s'\n", path);
 
-        int fd = open(
+        fd = open(
             path_tmp,
             O_WRONLY | O_CREAT | O_TRUNC,
             S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH
@@ -352,6 +354,7 @@ int asft_msg_rx_receive(struct asft_msg_rx *rx, uint8_t pkt_seq, uint8_t *pkt_da
             buf += rv;
         }
         close(fd);
+        fd = -1;
 
         if (rename(path_tmp, path)) {
             asft_error("Rename failed\n");
