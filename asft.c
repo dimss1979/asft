@@ -200,26 +200,51 @@ int main(int argc, char **argv)
 {
     int rv = 0;
     bool verify_only = false;
+    bool generate_key = false;
     int opt;
 
-    while ((opt = getopt(argc, argv, "c")) != -1) {
+    while ((opt = getopt(argc, argv, "cg")) != -1) {
         switch (opt) {
             case 'c':
                 verify_only = true;
                 break;
+            case 'g':
+                generate_key = true;
+                break;
             default:
                 asft_error("Usage: %s [-c] <config_file>\n", argv[0]);
+                asft_error("       %s -g\n", argv[0]);
                 return 1;
         }
     }
 
+    if (generate_key) {
+        char key[ASFT_KEY_B64_LEN + 1];
+
+        if (verify_only || optind < argc) {
+            asft_error("Option -g takes no other arguments\n");
+            asft_error("Usage: %s -g\n", argv[0]);
+            return 1;
+        }
+
+        if (asft_crypto_generate_key(key, sizeof(key))) {
+            asft_error("Key generation failed\n");
+            return 1;
+        }
+
+        asft_info("%s\n", key);
+        return 0;
+    }
+
     if (optind >= argc) {
         asft_error("Usage: %s [-c] <config_file>\n", argv[0]);
+        asft_error("       %s -g\n", argv[0]);
         return 1;
     }
     if (optind + 1 < argc) {
         asft_error("Too many arguments\n");
         asft_error("Usage: %s [-c] <config_file>\n", argv[0]);
+        asft_error("       %s -g\n", argv[0]);
         return 1;
     }
 

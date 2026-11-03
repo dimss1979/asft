@@ -46,6 +46,12 @@ OpenSSL 3.x is required.
 
 First, create a configuration file.
 You should use long and random passwords.
+To generate a random 256-bit key in base64, similar to `wg genpsk`, use `-g`.
+It prints the key and exits:
+
+```
+./asft -g
+```
 
 **Each peer must have a unique password.**
 

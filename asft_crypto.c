@@ -9,6 +9,7 @@
 #include <openssl/kdf.h>
 #include <openssl/core_names.h>
 #include <openssl/hmac.h>
+#include <openssl/rand.h>
 #include <unistd.h>
 #include <assert.h>
 #include <stdbool.h>
@@ -286,6 +287,32 @@ error:
         EVP_MAC_CTX_free(ctx);
     if (mac)
         EVP_MAC_free(mac);
+
+    return rv;
+}
+
+int asft_crypto_generate_key(char *out, size_t out_len)
+{
+    unsigned char key[ASFT_KEY_LEN];
+    int n;
+    int rv = 1;
+
+    if (out_len < ASFT_KEY_B64_LEN + 1)
+        return 1;
+
+    if (RAND_bytes(key, sizeof(key)) != 1)
+        goto error;
+
+    n = EVP_EncodeBlock((unsigned char *)out, key, sizeof(key));
+    if (n != ASFT_KEY_B64_LEN)
+        goto error;
+
+    out[n] = '\0';
+    rv = 0;
+
+error:
+
+    OPENSSL_cleanse(key, sizeof(key));
 
     return rv;
 }

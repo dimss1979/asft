@@ -87,6 +87,12 @@ void asft_serial_rx_time(struct timespec *ts);
 #define ASFT_FINGERPRINT_LEN     8
 #define ASFT_FINGERPRINT_HEX_LEN (ASFT_FINGERPRINT_LEN * 2)
 
+/* Random key size for -g, and its base64 length without the terminator. */
+#define ASFT_KEY_LEN     32
+#define ASFT_KEY_B64_LEN 44
+
+int asft_crypto_generate_key(char *out, size_t out_len);
+
 struct asft_crypto_ctx;
 
 struct asft_crypto_ctx *asft_crypto_ctx_init(char *password, char *network_id);
