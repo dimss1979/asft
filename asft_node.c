@@ -14,7 +14,7 @@
 static struct gateway
 {
     char *label;
-    char *password;
+    char *key;
     struct asft_crypto_ctx *crypto_ctx;
 
     bool ready;
@@ -56,20 +56,20 @@ int asft_node_init_crypto(char *network_id)
         asft_error("Gateway not specified\n");
         return -1;
     }
-    if (!gw.password) {
-        asft_error("Gateway password not specified\n");
+    if (!gw.key) {
+        asft_error("Gateway key not specified\n");
         return -1;
     }
 
-    gw.crypto_ctx = asft_crypto_ctx_init(gw.password, network_id);
+    gw.crypto_ctx = asft_crypto_ctx_init(gw.key, network_id);
     if (!gw.crypto_ctx)
         return -1;
 
     asft_crypto_timestamp_init(gw.crypto_ctx);
 
-    explicit_bzero(gw.password, strlen(gw.password));
-    free(gw.password);
-    gw.password = NULL;
+    explicit_bzero(gw.key, strlen(gw.key));
+    free(gw.key);
+    gw.key = NULL;
 
     return 0;
 }
@@ -199,7 +199,7 @@ int asft_node_loop(void)
     }
 }
 
-int asft_node_set_gateway(char *label, char *password)
+int asft_node_set_gateway(char *label, char *key)
 {
     if (strchr(label, '/')) {
         asft_error("Invalid label - contains slash\n");
@@ -207,24 +207,24 @@ int asft_node_set_gateway(char *label, char *password)
     }
 
     char *new_label = strdup(label);
-    char *new_password = strdup(password);
-    if (!new_label || !new_password) {
+    char *new_key = strdup(key);
+    if (!new_label || !new_key) {
         free(new_label);
-        if (new_password) {
-            explicit_bzero(new_password, strlen(new_password));
-            free(new_password);
+        if (new_key) {
+            explicit_bzero(new_key, strlen(new_key));
+            free(new_key);
         }
         goto error;
     }
 
     free(gw.label);
-    if (gw.password) {
-        explicit_bzero(gw.password, strlen(gw.password));
-        free(gw.password);
+    if (gw.key) {
+        explicit_bzero(gw.key, strlen(gw.key));
+        free(gw.key);
     }
 
     gw.label = new_label;
-    gw.password = new_password;
+    gw.key = new_key;
 
     return 0;
 

@@ -17,7 +17,7 @@ struct node
 {
     struct node *next;
     char *label;
-    char *password;
+    char *key;
     struct asft_crypto_ctx *crypto_ctx;
 
     uint64_t pause_until;
@@ -134,13 +134,13 @@ int asft_gateway_init_crypto(char *network_id)
     }
 
     while (n) {
-        n->crypto_ctx = asft_crypto_ctx_init(n->password, network_id);
+        n->crypto_ctx = asft_crypto_ctx_init(n->key, network_id);
         if (!n->crypto_ctx)
             return -1;
 
-        explicit_bzero(n->password, strlen(n->password));
-        free(n->password);
-        n->password = NULL;
+        explicit_bzero(n->key, strlen(n->key));
+        free(n->key);
+        n->key = NULL;
 
         n = n->next;
     }
@@ -308,7 +308,7 @@ int asft_gateway_loop(void)
     return 0;
 }
 
-int asft_gateway_add_node(char *label, char *password)
+int asft_gateway_add_node(char *label, char *key)
 {
     struct node *new = NULL;
 
@@ -326,8 +326,8 @@ int asft_gateway_add_node(char *label, char *password)
     if (!new->label)
         goto error;
 
-    new->password = strdup(password);
-    if (!new->password)
+    new->key = strdup(key);
+    if (!new->key)
         goto error;
 
     new->next = node_first;
@@ -340,9 +340,9 @@ error:
 
     if (new) {
         free(new->label);
-        if (new->password) {
-            explicit_bzero(new->password, strlen(new->password));
-            free(new->password);
+        if (new->key) {
+            explicit_bzero(new->key, strlen(new->key));
+            free(new->key);
         }
         free(new);
     }

@@ -76,6 +76,10 @@ static int read_config_file(char *filename)
                 asft_error("network_id specified more than once on line %i\n", line_number);
                 goto error;
             }
+            if (asft_crypto_key_valid(id)) {
+                asft_error("Invalid network_id on line %i: expected base64 256 bit key\n", line_number);
+                goto error;
+            }
             network_id = strdup(id);
             if (!network_id) {
                 asft_error("Cannot allocate network_id on line %i\n", line_number);
@@ -146,12 +150,16 @@ static int read_config_file(char *filename)
                 asft_error("Node label not specified on line %i\n", line_number);
                 goto error;
             }
-            char *password = strtok(NULL, delimiters);
-            if (!password) {
-                asft_error("Node password not specified on line %i\n", line_number);
+            char *key = strtok(NULL, delimiters);
+            if (!key) {
+                asft_error("Node key not specified on line %i\n", line_number);
                 goto error;
             }
-            if (asft_gateway_add_node(label, password)) {
+            if (asft_crypto_key_valid(key)) {
+                asft_error("Invalid node key on line %i: expected base64 256 bit key\n", line_number);
+                goto error;
+            }
+            if (asft_gateway_add_node(label, key)) {
                 asft_error("Cannot add node on line %i\n", line_number);
                 goto error;
             }
@@ -161,12 +169,16 @@ static int read_config_file(char *filename)
                 asft_error("Gateway label not specified on line %i\n", line_number);
                 goto error;
             }
-            char *password = strtok(NULL, delimiters);
-            if (!password) {
-                asft_error("Gateway password not specified on line %i\n", line_number);
+            char *key = strtok(NULL, delimiters);
+            if (!key) {
+                asft_error("Gateway key not specified on line %i\n", line_number);
                 goto error;
             }
-            if (asft_node_set_gateway(label, password)) {
+            if (asft_crypto_key_valid(key)) {
+                asft_error("Invalid gateway key on line %i: expected base64 256 bit key\n", line_number);
+                goto error;
+            }
+            if (asft_node_set_gateway(label, key)) {
                 asft_error("Cannot set gateway on line %i\n", line_number);
                 goto error;
             }

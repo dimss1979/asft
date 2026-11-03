@@ -45,15 +45,17 @@ OpenSSL 3.x is required.
 ## Run
 
 First, create a configuration file.
-You should use long and random passwords.
-To generate a random 256-bit key in base64, similar to `wg genpsk`, use `-g`.
-It prints the key and exits:
+Every key is a random 256-bit value encoded in base64.
+Generate keys with `-g`, similar to `wg genpsk`.
+It prints a new key and exits:
 
 ```
 ./asft -g
 ```
 
-**Each peer must have a unique password.**
+You need one key per peer and one `network_id` key for the whole network.
+
+**Each peer must have a unique key.**
 
 Next, run `asft`.
 
@@ -78,23 +80,23 @@ the four derived encryption keys followed by the peer label:
 1a62bab27150946f node01
 ```
 
-Run it on both ends of a link. Peers that share the same password and
+Run it on both ends of a link. Peers that share the same key and
 `network_id` must print the same fingerprint. A different value means that the
-password or `network_id` does not match.
+key or `network_id` does not match.
 
 Sample configuration file for gateway:
 
 ```
 debug 1
 mode gateway
-network_id 4b7d9a1c8e2f6350a9c4d1e7b8f2036a
+network_id Um4E0GBrkG0KItn4iuzqvJoThXAmnblIWxIWxHKIHfo=
 port /dev/ttyUSB0 1200
 retry_timeout 2
 backoff_time_max 60
 
-node node01 password123
-#node node02 password234
-#node node03 password345
+node node01 vJ58kVkmDb0zIZBJ1JKzGuH3QnV9jv52pUaNXPVF3Y4=
+#node node02 W0keehnv9CPUU3F7YpdsflIsbrwbbbtjcwBEG9bmtNU=
+#node node03 QZ4jGUZceZiPK2WkLfKQWrl6OY/n2fGoAfWqG4RRy34=
 ```
 
 Sample configuration file for node01:
@@ -102,10 +104,12 @@ Sample configuration file for node01:
 ```
 debug 1
 mode node
-network_id 4b7d9a1c8e2f6350a9c4d1e7b8f2036a
+network_id Um4E0GBrkG0KItn4iuzqvJoThXAmnblIWxIWxHKIHfo=
 port /dev/ttyUSB1 1200
-gateway gw password123
+gateway gw vJ58kVkmDb0zIZBJ1JKzGuH3QnV9jv52pUaNXPVF3Y4=
 ```
+
+The keys in the samples are placeholders. Replace them with output of `./asft -g`.
 
 You need to create directories for incoming and outgoing files. At the gateway:
 
@@ -173,19 +177,18 @@ Either 'gateway' or 'node'.
 
 ### network_id
 
-Salt used for password-based key derivation. This option is mandatory.
+Base64 encoded 256-bit salt for key derivation. This option is mandatory.
+It is used as the HKDF salt.
 
-It must be identical on the gateway and every node. Use a long random value,
-for example:
+It must be identical on the gateway and every node. Generate it with:
 
 ```
-openssl rand -hex 16
+./asft -g
 ```
 
 `network_id` is not a secret, but it should be unique to your network. It
-prevents identical passwords on different networks from producing the same
-keys and makes precomputed password tables useless. The value must not
-contain whitespace.
+prevents identical peer keys on different networks from producing the same
+derived keys. The value must be exactly 44 base64 characters, with no whitespace.
 
 Changing `network_id` changes all derived keys, so update all peers together.
 
@@ -294,7 +297,7 @@ This option is for testing purposes only, to simulate unreliable communication c
 
 ### node
 
-(gateway only) Label and password for a peer node.
+(gateway only) Label and base64 256-bit key for a peer node.
 
 Label is used for:
 
@@ -310,7 +313,7 @@ You can specify multiple nodes for multipoint operation if transmission medium p
 
 ### gateway
 
-(node only) Label and password for the gateway.
+(node only) Label and base64 256-bit key for the gateway.
 
 Label is used for:
 
@@ -321,13 +324,13 @@ Both directories must be created in advance in the working directory of `asft`.
 
 ## Security
 
-Each node is addressed by its password only.
-Please use long, unique, hard to guess passwords.
-Protect `asft` configuration files.
+Each node is addressed by its key only.
+Use keys generated with `./asft -g` and never reuse them.
+Protect `asft` configuration files, since they contain the keys.
 
-The `network_id` value is used as the salt for password-based key derivation.
-It is not a secret, but it must be identical on all peers and unique to the
-network.
+Each peer key is the input keying material for HKDF, and `network_id` is the
+HKDF salt. It is not a secret, but it must be identical on all peers and unique
+to the network.
 
 By default, gateway and nodes must maintain clock synchronization within a few seconds.
 

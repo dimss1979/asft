@@ -35,67 +35,21 @@ union ts {
     uint8_t bytes[ASFT_TS_LEN];
 };
 
-static int scrypt(
-    void *key,
-    size_t key_len,
-    void *password,
-    void *salt
-) {
-    int rv = 1;
-    EVP_KDF *kdf = NULL;
-    EVP_KDF_CTX *kctx = NULL;
-    OSSL_PARAM params[6], *p = params;
-
-    uint64_t param_N = 1024;
-    uint32_t param_r = 8;
-    uint32_t param_p = 16;
-
-    if (!key || !key_len || !password || !salt)
-        goto error;
-
-    kdf = EVP_KDF_fetch(NULL, "SCRYPT", NULL);
-    if (!kdf)
-        goto error;
-
-    kctx = EVP_KDF_CTX_new(kdf);
-    if (!kctx)
-        goto error;
-
-    *p++ = OSSL_PARAM_construct_uint64(OSSL_KDF_PARAM_SCRYPT_N, &param_N);
-    *p++ = OSSL_PARAM_construct_uint32(OSSL_KDF_PARAM_SCRYPT_R, &param_r);
-    *p++ = OSSL_PARAM_construct_uint32(OSSL_KDF_PARAM_SCRYPT_P, &param_p);
-    *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_SALT, salt, strlen(salt));
-    *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_PASSWORD, password, strlen(password));
-    *p = OSSL_PARAM_construct_end();
-
-    if (EVP_KDF_derive(kctx, key, key_len, params) != 1)
-        goto error;
-
-    rv = 0;
-
-error:
-
-    if (kctx)
-        EVP_KDF_CTX_free(kctx);
-    if (kdf)
-        EVP_KDF_free(kdf);
-
-    return rv;
-}
-
 static int HKDF(
     void *key,
     size_t key_len,
     void *keymat,
     size_t keymat_len,
+    void *salt,
+    size_t salt_len,
     void *info
 ) {
     int rv = 1;
     EVP_KDF *kdf = NULL;
     EVP_KDF_CTX *kctx = NULL;
-    OSSL_PARAM params[4], *p = params;
+    OSSL_PARAM params[5], *p = params;
 
-    if (!key || !keymat || !info || !key_len || !keymat_len)
+    if (!key || !keymat || !salt || !info || !key_len || !keymat_len || !salt_len)
         goto error;
 
     kdf = EVP_KDF_fetch(NULL, "HKDF", NULL);
@@ -108,6 +62,7 @@ static int HKDF(
 
     *p++ = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_DIGEST, SN_blake2b512, strlen(SN_blake2b512));
     *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_KEY, keymat, keymat_len);
+    *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_SALT, salt, salt_len);
     *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_INFO, info, strlen(info));
     *p = OSSL_PARAM_construct_end();
 
@@ -436,7 +391,56 @@ error:
     return rv;
 }
 
-struct asft_crypto_ctx *asft_crypto_ctx_init(char *password, char *network_id)
+/*
+ * Decode a base64 key of exactly ASFT_KEY_LEN bytes.
+ * Returns 0 on success, 1 on any format error.
+ */
+int asft_crypto_key_decode(const char *b64, uint8_t out[ASFT_KEY_LEN])
+{
+    /* EVP_DecodeBlock writes up to 33 bytes for 44 characters and counts padding */
+    uint8_t buf[ASFT_KEY_LEN + 1];
+    size_t len;
+    size_t pad = 0;
+    int n;
+    int rv = 1;
+
+    if (!b64)
+        return 1;
+
+    len = strlen(b64);
+    if (len != ASFT_KEY_B64_LEN)
+        return 1;
+
+    if (b64[len - 1] == '=')
+        pad++;
+    if (b64[len - 2] == '=')
+        pad++;
+
+    n = EVP_DecodeBlock(buf, (const unsigned char *)b64, (int)len);
+    if (n < 0 || (size_t)n < pad || (size_t)n - pad != ASFT_KEY_LEN)
+        goto error;
+
+    memcpy(out, buf, ASFT_KEY_LEN);
+    rv = 0;
+
+error:
+
+    OPENSSL_cleanse(buf, sizeof(buf));
+
+    return rv;
+}
+
+int asft_crypto_key_valid(const char *b64)
+{
+    uint8_t key[ASFT_KEY_LEN];
+    int rv = asft_crypto_key_decode(b64, key);
+
+    OPENSSL_cleanse(key, sizeof(key));
+
+    return rv;
+}
+
+struct asft_crypto_ctx *asft_crypto_ctx_init(const char *key_b64, const char *network_id_b64)
 {
     struct asft_crypto_ctx *ctx;
 
@@ -444,14 +448,20 @@ struct asft_crypto_ctx *asft_crypto_ctx_init(char *password, char *network_id)
     assert(ctx);
     memset(ctx, 0, sizeof(*ctx));
 
-    uint8_t master_key[64] = {0};
-    int rv = scrypt(master_key, sizeof(master_key), password, network_id);
-    if (rv)
+    /* peer key is the input keying material, network_id is the HKDF salt */
+    uint8_t key[ASFT_KEY_LEN];
+    uint8_t salt[ASFT_KEY_LEN];
+    int rv = 1;
+
+    if (asft_crypto_key_decode(key_b64, key))
+        goto error;
+    if (asft_crypto_key_decode(network_id_b64, salt))
         goto error;
 
     rv = HKDF(
         ctx->request_key, sizeof(ctx->request_key),
-        master_key, sizeof(master_key),
+        key, sizeof(key),
+        salt, sizeof(salt),
         "asft-request-key"
     );
     if (rv)
@@ -459,7 +469,8 @@ struct asft_crypto_ctx *asft_crypto_ctx_init(char *password, char *network_id)
 
     rv = HKDF(
         ctx->response_key, sizeof(ctx->response_key),
-        master_key, sizeof(master_key),
+        key, sizeof(key),
+        salt, sizeof(salt),
         "asft-response-key"
     );
     if (rv)
@@ -467,7 +478,8 @@ struct asft_crypto_ctx *asft_crypto_ctx_init(char *password, char *network_id)
 
     rv = HKDF(
         ctx->msg_key, sizeof(ctx->msg_key),
-        master_key, sizeof(master_key),
+        key, sizeof(key),
+        salt, sizeof(salt),
         "asft-message-key"
     );
     if (rv)
@@ -475,7 +487,8 @@ struct asft_crypto_ctx *asft_crypto_ctx_init(char *password, char *network_id)
 
     rv = HKDF(
         ctx->msg_hdr_key, sizeof(ctx->msg_hdr_key),
-        master_key, sizeof(master_key),
+        key, sizeof(key),
+        salt, sizeof(salt),
         "asft-message-header-key"
     );
     if (rv)
@@ -485,7 +498,8 @@ struct asft_crypto_ctx *asft_crypto_ctx_init(char *password, char *network_id)
 
 error:
 
-    explicit_bzero(master_key, sizeof(master_key));
+    OPENSSL_cleanse(key, sizeof(key));
+    OPENSSL_cleanse(salt, sizeof(salt));
 
     if (rv) {
         explicit_bzero(ctx, sizeof(*ctx));
