@@ -83,9 +83,14 @@ void asft_serial_rx_time(struct timespec *ts);
 
 /* crypto */
 
+/* Short fingerprint over all four derived encryption keys, used by -c. */
+#define ASFT_FINGERPRINT_LEN     8
+#define ASFT_FINGERPRINT_HEX_LEN (ASFT_FINGERPRINT_LEN * 2)
+
 struct asft_crypto_ctx;
 
 struct asft_crypto_ctx *asft_crypto_ctx_init(char *password, char *network_id);
+int asft_crypto_fingerprint(struct asft_crypto_ctx *ctx, char *out, size_t out_len);
 void asft_crypto_timestamp_init(struct asft_crypto_ctx *ctx);
 uint64_t asft_crypto_last_rx_timestamp(struct asft_crypto_ctx *ctx);
 
@@ -181,13 +186,17 @@ void asft_msg_rx_cancel(struct asft_msg_rx *rx);
 
 /* node */
 
-int asft_node_loop(char *network_id);
+int asft_node_loop(void);
 int asft_node_set_gateway(char *label, char *password);
+int asft_node_init_crypto(char *network_id);
+int asft_node_print_peers(void);
 
 /* gateway */
 
-int asft_gateway_loop(char *network_id);
+int asft_gateway_loop(void);
 int asft_gateway_add_node(char *label, char *password);
+int asft_gateway_init_crypto(char *network_id);
+int asft_gateway_print_peers(void);
 void asft_gateway_set_retry_timeout(int new_timeout);
 void asft_gateway_set_backoff_time_max(uint32_t new_backoff_time_max);
 

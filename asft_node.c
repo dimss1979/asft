@@ -25,14 +25,14 @@ static struct gateway
     char *download_dir;
 } gw = { 0 };
 
-static int gateway_init(char *network_id)
+static int gateway_init(void)
 {
     if (!gw.label) {
         asft_error("Gateway not specified\n");
         goto error;
     }
-    if (!gw.password) {
-        asft_error("Gateway password not specified\n");
+    if (!gw.crypto_ctx) {
+        asft_error("Gateway crypto context not initialized\n");
         goto error;
     }
     if (asprintf(&gw.upload_dir, "to_%s", gw.label) < 0)
@@ -40,12 +40,30 @@ static int gateway_init(char *network_id)
     if (asprintf(&gw.download_dir, "from_%s", gw.label) < 0)
         goto error;
 
-    gw.crypto_ctx = asft_crypto_ctx_init(gw.password, network_id);
-    if (!gw.crypto_ctx)
-        goto error;
-
     gw.msg_tx.crypto_ctx = gw.crypto_ctx;
     gw.msg_rx.crypto_ctx = gw.crypto_ctx;
+
+    return 0;
+
+error:
+
+    return -1;
+}
+
+int asft_node_init_crypto(char *network_id)
+{
+    if (!gw.label) {
+        asft_error("Gateway not specified\n");
+        return -1;
+    }
+    if (!gw.password) {
+        asft_error("Gateway password not specified\n");
+        return -1;
+    }
+
+    gw.crypto_ctx = asft_crypto_ctx_init(gw.password, network_id);
+    if (!gw.crypto_ctx)
+        return -1;
 
     asft_crypto_timestamp_init(gw.crypto_ctx);
 
@@ -54,10 +72,20 @@ static int gateway_init(char *network_id)
     gw.password = NULL;
 
     return 0;
+}
 
-error:
+int asft_node_print_peers(void)
+{
+    char fingerprint[ASFT_FINGERPRINT_HEX_LEN + 1];
 
-    return -1;
+    if (asft_crypto_fingerprint(gw.crypto_ctx, fingerprint, sizeof(fingerprint))) {
+        asft_error("Cannot compute fingerprint for peer '%s'\n", gw.label);
+        return 1;
+    }
+
+    asft_info("%s %s\n", fingerprint, gw.label);
+
+    return 0;
 }
 
 static void process_req_data(asft_pkt *req, struct asft_pkt_flags *req_flags, asft_pkt *resp, size_t *resp_len, struct asft_pkt_flags *resp_flags, bool have_data)
@@ -95,9 +123,9 @@ static void process_req_data(asft_pkt *req, struct asft_pkt_flags *req_flags, as
     asft_msg_rx_get_ack(&gw.msg_rx, &resp_flags->ack);
 }
 
-int asft_node_loop(char *network_id)
+int asft_node_loop(void)
 {
-    if (gateway_init(network_id)) {
+    if (gateway_init()) {
         asft_error("Initialization failed\n");
         return 1;
     }

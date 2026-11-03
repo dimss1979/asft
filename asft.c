@@ -8,6 +8,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #include "asft.h"
 #include <time.h>
@@ -20,6 +21,7 @@ typedef enum {
 
 static op_mode_t op_mode = OM_UNKNOWN;
 static char *network_id = NULL;
+static bool config_check = false;
 
 static int read_config_file(char *filename)
 {
@@ -91,7 +93,7 @@ static int read_config_file(char *filename)
                 asft_error("No baudrate specified on line %i\n", line_number);
                 goto error;
             }
-            if (asft_serial_init(device_name, baudrate, sizeof(asft_pkt))) {
+            if (!config_check && asft_serial_init(device_name, baudrate, sizeof(asft_pkt))) {
                 asft_error("Cannot initialize serial port on line %i\n", line_number);
                 goto error;
             }
@@ -197,15 +199,35 @@ error:
 int main(int argc, char **argv)
 {
     int rv = 0;
+    bool verify_only = false;
+    int opt;
 
-    if (argc < 2) {
-        asft_error("Usage: asft <config_file>\n");
+    while ((opt = getopt(argc, argv, "c")) != -1) {
+        switch (opt) {
+            case 'c':
+                verify_only = true;
+                break;
+            default:
+                asft_error("Usage: %s [-c] <config_file>\n", argv[0]);
+                return 1;
+        }
+    }
+
+    if (optind >= argc) {
+        asft_error("Usage: %s [-c] <config_file>\n", argv[0]);
+        return 1;
+    }
+    if (optind + 1 < argc) {
+        asft_error("Too many arguments\n");
+        asft_error("Usage: %s [-c] <config_file>\n", argv[0]);
         return 1;
     }
 
     srand(time(NULL));
 
-    if (read_config_file(argv[1])) {
+    config_check = verify_only;
+
+    if (read_config_file(argv[optind])) {
         asft_error("Error while reading configuration file\n");
         return 1;
     }
@@ -218,15 +240,50 @@ int main(int argc, char **argv)
 
     switch (op_mode) {
         case OM_GATEWAY:
-            rv = asft_gateway_loop(network_id);
+            if (asft_gateway_init_crypto(network_id)) {
+                asft_error("Key derivation failed\n");
+                free(network_id);
+                return 1;
+            }
             break;
         case OM_NODE:
-            rv = asft_node_loop(network_id);
+            if (asft_node_init_crypto(network_id)) {
+                asft_error("Key derivation failed\n");
+                free(network_id);
+                return 1;
+            }
             break;
         default:
             asft_error("Operation mode not specified\n");
             free(network_id);
             return 1;
+    }
+
+    if (verify_only) {
+        switch (op_mode) {
+            case OM_GATEWAY:
+                rv = asft_gateway_print_peers();
+                break;
+            case OM_NODE:
+                rv = asft_node_print_peers();
+                break;
+            default:
+                break;
+        }
+
+        free(network_id);
+        return !!rv;
+    }
+
+    switch (op_mode) {
+        case OM_GATEWAY:
+            rv = asft_gateway_loop();
+            break;
+        case OM_NODE:
+            rv = asft_node_loop();
+            break;
+        default:
+            break;
     }
 
     free(network_id);

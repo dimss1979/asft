@@ -58,6 +58,24 @@ Note that there is no option to daemonize the process - this is not required the
 ./asft configuration_file.conf
 ```
 
+To verify a configuration without opening the serial port or starting file
+transfer, use `-c`:
+
+```
+./asft -c configuration_file.conf
+```
+
+It derives the keys and prints every configured peer as a short fingerprint of
+the four derived encryption keys followed by the peer label:
+
+```
+1a62bab27150946f node01
+```
+
+Run it on both ends of a link. Peers that share the same password and
+`network_id` must print the same fingerprint. A different value means that the
+password or `network_id` does not match.
+
 Sample configuration file for gateway:
 
 ```

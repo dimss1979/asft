@@ -95,7 +95,7 @@ static struct node *node_pick_next(struct node *cur)
     return NULL;
 }
 
-static int nodes_init(char *network_id)
+static int nodes_init(void)
 {
     struct node *n;
 
@@ -111,16 +111,8 @@ static int nodes_init(char *network_id)
         if (asprintf(&n->download_dir, "to_%s", n->label) < 0)
             goto error;
 
-        n->crypto_ctx = asft_crypto_ctx_init(n->password, network_id);
-        if (!n->crypto_ctx)
-            goto error;
-
         n->msg_tx.crypto_ctx = n->crypto_ctx;
         n->msg_rx.crypto_ctx = n->crypto_ctx;
-
-        explicit_bzero(n->password, strlen(n->password));
-        free(n->password);
-        n->password = NULL;
 
         n = n->next;
     }
@@ -130,6 +122,50 @@ static int nodes_init(char *network_id)
 error:
 
     return -1;
+}
+
+int asft_gateway_init_crypto(char *network_id)
+{
+    struct node *n = node_first;
+
+    if (!node_cnt) {
+        asft_error("No nodes configured\n");
+        return -1;
+    }
+
+    while (n) {
+        n->crypto_ctx = asft_crypto_ctx_init(n->password, network_id);
+        if (!n->crypto_ctx)
+            return -1;
+
+        explicit_bzero(n->password, strlen(n->password));
+        free(n->password);
+        n->password = NULL;
+
+        n = n->next;
+    }
+
+    return 0;
+}
+
+int asft_gateway_print_peers(void)
+{
+    char fingerprint[ASFT_FINGERPRINT_HEX_LEN + 1];
+    struct node *n = node_first;
+    int rv = 0;
+
+    while (n) {
+        if (asft_crypto_fingerprint(n->crypto_ctx, fingerprint, sizeof(fingerprint))) {
+            asft_error("Cannot compute fingerprint for peer '%s'\n", n->label);
+            rv = -1;
+        } else {
+            asft_info("%s %s\n", fingerprint, n->label);
+        }
+
+        n = n->next;
+    }
+
+    return rv;
 }
 
 static void process_resp_data(struct node *n, asft_pkt *resp, struct asft_pkt_flags *resp_flags, bool have_data)
@@ -149,13 +185,13 @@ static void process_resp_data(struct node *n, asft_pkt *resp, struct asft_pkt_fl
     asft_msg_tx_init(&n->msg_tx, n->download_dir);
 }
 
-int asft_gateway_loop(char *network_id)
+int asft_gateway_loop(void)
 {
     int rv;
     struct node *n = NULL;
     uint64_t timeout;
 
-    if (nodes_init(network_id)) {
+    if (nodes_init()) {
         asft_error("Initialization failed\n");
         return 1;
     }

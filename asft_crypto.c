@@ -469,6 +469,68 @@ error:
     return ctx;
 }
 
+int asft_crypto_fingerprint(struct asft_crypto_ctx *ctx, char *out, size_t out_len)
+{
+    static const char hex[] = "0123456789abcdef";
+    int rv = 1;
+    EVP_MD *md = NULL;
+    EVP_MD_CTX *mdctx = NULL;
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int digest_len = 0;
+
+    if (!ctx || !out || out_len < ASFT_FINGERPRINT_HEX_LEN + 1)
+        return 1;
+
+    md = EVP_MD_fetch(NULL, "BLAKE2B-512", NULL);
+    if (!md) {
+        asft_error("Fingerprint digest is not supported\n");
+        goto error;
+    }
+
+    mdctx = EVP_MD_CTX_new();
+    if (!mdctx) {
+        asft_error("Cannot create fingerprint digest context\n");
+        goto error;
+    }
+
+    if (EVP_DigestInit_ex2(mdctx, md, NULL) != 1 ||
+        EVP_DigestUpdate(mdctx, ctx->request_key, sizeof(ctx->request_key)) != 1 ||
+        EVP_DigestUpdate(mdctx, ctx->response_key, sizeof(ctx->response_key)) != 1 ||
+        EVP_DigestUpdate(mdctx, ctx->msg_key, sizeof(ctx->msg_key)) != 1 ||
+        EVP_DigestUpdate(mdctx, ctx->msg_hdr_key, sizeof(ctx->msg_hdr_key)) != 1 ||
+        EVP_DigestFinal_ex(mdctx, digest, &digest_len) != 1) {
+        asft_error("Cannot compute fingerprint\n");
+        goto error;
+    }
+
+    if (digest_len < ASFT_FINGERPRINT_LEN) {
+        asft_error("Fingerprint digest is too short\n");
+        goto error;
+    }
+
+    for (size_t i = 0; i < ASFT_FINGERPRINT_LEN; i++) {
+        out[i * 2] = hex[digest[i] >> 4];
+        out[i * 2 + 1] = hex[digest[i] & 0x0f];
+    }
+    out[ASFT_FINGERPRINT_HEX_LEN] = '\0';
+
+    rv = 0;
+
+error:
+
+    if (mdctx)
+        EVP_MD_CTX_free(mdctx);
+    if (md)
+        EVP_MD_free(md);
+
+    OPENSSL_cleanse(digest, sizeof(digest));
+
+    if (rv)
+        out[0] = '\0';
+
+    return rv;
+}
+
 void asft_crypto_timestamp_init(struct asft_crypto_ctx *ctx)
 {
     ctx->timestamp = asft_timestamp();
