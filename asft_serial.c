@@ -160,13 +160,24 @@ int asft_serial_init(char *devname, char *baudrate_string, size_t pkt_len_max)
     struct termios t;
     speed_t baudrate;
 
+    if (pkt_len_max == 0) {
+        asft_error("Serial port packet length must be greater than zero\n");
+        return -1;
+    }
+
     asft_serial_cleanup();
 
     p.pkt_len_max = pkt_len_max;
-    p.frame_rx_len_max = pkt_len_max + ((pkt_len_max / 254) + 1) /* overhead */;
-    p.frame_tx_len_max = p.frame_rx_len_max + 2 /* start and stop delimiter */;
+    /* Worst case COBS overhead: one code byte per 254 input bytes, plus one. */
+    const size_t cobs_overhead = pkt_len_max / 254 + 1;
+    const size_t delimiter_overhead = 2;
+    p.frame_rx_len_max = pkt_len_max + cobs_overhead;
+    p.frame_tx_len_max = pkt_len_max + cobs_overhead + delimiter_overhead;
 
-    p.pkt_rx_buf = malloc(p.frame_rx_len_max + 1);
+    /* Decoded data never exceeds frame_rx_len_max - 1 (0x00 is the frame
+     * delimiter and is never stored in frame_rx_buf). */
+    const size_t cobs_decoded_size = p.frame_rx_len_max - 1;
+    p.pkt_rx_buf = malloc(cobs_decoded_size);
     if (!p.pkt_rx_buf) {
         asft_error("Serial input packet buffer allocation failed\n");
         goto error;
@@ -179,7 +190,7 @@ int asft_serial_init(char *devname, char *baudrate_string, size_t pkt_len_max)
         goto error;
     }
 
-    p.frame_rx_buf = malloc(p.frame_rx_len_max + 1);
+    p.frame_rx_buf = malloc(p.frame_rx_len_max);
     if (!p.frame_rx_buf) {
         asft_error("Serial input frame buffer allocation failed\n");
         goto error;
