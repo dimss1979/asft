@@ -66,23 +66,17 @@ Note that there is no option to daemonize the process - this is not required the
 ./asft configuration_file.conf
 ```
 
-To verify a configuration without opening the serial port or starting file
-transfer, use `-c`:
+## Command-line Options
 
-```
-./asft -c configuration_file.conf
-```
+`asft` accepts the following command-line options:
 
-It derives the keys and prints every configured peer as a short fingerprint of
-the four derived encryption keys followed by the peer label:
-
-```
-1a62bab27150946f node01
-```
-
-Run it on both ends of a link. Peers that share the same key and
-`network_id` must print the same fingerprint. A different value means that the
-key or `network_id` does not match.
+* `<config_file>` — Run the gateway or node operation loop using the specified configuration file.
+* `-c <config_file>` — Verify the configuration without opening the serial port or starting file transfer. It derives the keys and prints every configured peer as a short fingerprint followed by the peer label:
+  ```
+  1a62bab27150946f node01
+  ```
+  Run it on both ends of a link. Peers that share the same key and `network_id` must print the same fingerprint. A different value means that the key or `network_id` does not match.
+* `-g` — Generate and print a new random 256-bit base64-encoded key, then exit.
 
 Sample configuration file for gateway:
 
@@ -188,7 +182,9 @@ It must be identical on the gateway and every node. Generate it with:
 
 `network_id` is not a secret, but it should be unique to your network. It
 prevents identical peer keys on different networks from producing the same
-derived keys. The value must be exactly 44 base64 characters, with no whitespace.
+derived keys. The value must be a valid base64-encoded 256-bit key (exactly 44 characters, with no whitespace).
+
+Config parsing validates that `network_id` conforms to this format and fails to start if invalid.
 
 Changing `network_id` changes all derived keys, so update all peers together.
 
@@ -299,6 +295,8 @@ This option is for testing purposes only, to simulate unreliable communication c
 
 (gateway only) Label and base64 256-bit key for a peer node.
 
+The key must be a valid 256-bit key generated with `./asft -g` (exactly 44 base64 characters). Config parsing validates the key format on startup.
+
 Label is used for:
 
 * derivation of incoming and outgoing directory names
@@ -314,6 +312,8 @@ You can specify multiple nodes for multipoint operation if transmission medium p
 ### gateway
 
 (node only) Label and base64 256-bit key for the gateway.
+
+The key must be a valid 256-bit key generated with `./asft -g` (exactly 44 base64 characters). Config parsing validates the key format on startup.
 
 Label is used for:
 
