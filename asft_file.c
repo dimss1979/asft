@@ -72,22 +72,26 @@ void asft_msg_tx_init(struct asft_msg_tx *tx, char *dir)
 
     while ((e = readdir(d))) {
         char path_tmp[PATH_LEN];
-        struct stat64 s, ls;
+        struct stat64 ls;
 
-        if (e->d_type != DT_LNK && e->d_type != DT_REG)
-            continue;
         if (e->d_name[0] == '.')
             continue;
-        if (snprintf(path_tmp, sizeof(path_tmp) - 1, "%s/%s", dir, e->d_name) < 0)
+        if (snprintf(path_tmp, sizeof(path_tmp), "%s/%s", dir, e->d_name) < 0)
             continue;
-        if (stat64(path_tmp, &s))
+        if (strlen(path_tmp) >= sizeof(path_tmp) - 1)
             continue;
-        size_t cur_file_len = s.st_size;
-        if (cur_file_len > FILE_SIZE_MAX)
-            continue;
-        size_t cur_filename_len = strlen(e->d_name);
+
+        /* stat without following links: symlinks are not regular files
+         * and are ignored. */
         if (lstat64(path_tmp, &ls))
             continue;
+        if (!S_ISREG(ls.st_mode))
+            continue;
+        if (ls.st_size < 0 || (uint64_t) ls.st_size > FILE_SIZE_MAX)
+            continue;
+        if (access(path_tmp, R_OK))
+            continue;
+
         if (
             ctime_min_valid &&
             (
@@ -104,8 +108,8 @@ void asft_msg_tx_init(struct asft_msg_tx *tx, char *dir)
         ctime_min = ls.st_ctim;
         ctime_min_valid = true;
         /* Record metadata only for the entry actually selected. */
-        file_len = cur_file_len;
-        filename_len = cur_filename_len;
+        file_len = (size_t) ls.st_size;
+        filename_len = strlen(e->d_name);
         memcpy(path, path_tmp, PATH_LEN);
         memcpy(filename, e->d_name, filename_len);
     }
@@ -133,9 +137,17 @@ void asft_msg_tx_init(struct asft_msg_tx *tx, char *dir)
     tx->msg_pos = 0;
     memcpy(hdr->data, filename, filename_len);
 
-    fd = open(path, O_RDONLY, 0);
+    /* O_NOFOLLOW refuses a symlink swapped in since the scan. */
+    fd = open(path, O_RDONLY | O_NOFOLLOW, 0);
     if (fd < 0) {
         asft_error("Cannot open TX MSG input file\n");
+        goto error;
+    }
+
+    struct stat64 fs;
+    if (fstat64(fd, &fs) || !S_ISREG(fs.st_mode) ||
+        fs.st_size < 0 || (size_t) fs.st_size != file_len) {
+        asft_error("TX MSG input file changed or is not a regular file\n");
         goto error;
     }
 

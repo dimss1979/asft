@@ -31,7 +31,7 @@ Nodes only respond to requests coming from the gateway.
 
 Default file size limit is 1000000 bytes.
 File names beginning with a dot are ignored.
-Symlinks are allowed.
+Only readable regular files are sent. Symlinks are ignored.
 
 ## Build
 
@@ -130,11 +130,12 @@ In the opposite direction, files travel from `to_gw` to `from_node_label` direct
 The user is advised to write their data to a temporary file in another directory.
 Dotfiles are ignored by `asft`.
 The same `to_label` directory can be used if your temporary file name begins with a dot.
-Then move/rename the file or create a link in the `to_label` directory.
+Then move/rename the file into the `to_label` directory.
 The file is ready for transfer.
+Symlinks in the `to_label` directory are not transferred, so do not use them.
 
 When multiple files are available, they are transferred in ascending `ctime` order.
-In other words, the file moved first or link created first in the `to_label` directory is transferred first.
+In other words, the regular file moved first into the `to_label` directory is transferred first.
 
 ## Gateway operation
 
