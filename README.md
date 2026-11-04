@@ -348,3 +348,9 @@ Each file is additionally authenticated. File authentication keys are separate f
 Basic encryption, authentication, and replay protection are implemented.
 Perfect Forward Secrecy (PFS) and Post-Compromise Security (PCS) are not currently implemented.
 Only symmetric encryption is used.
+
+### Known trade-offs
+
+* **Short packet tag.** Each packet carries a 40-bit authentication tag, chosen to keep per-packet overhead low on slow links. An attacker who can inject packets has about a 2^-40 chance per attempt of forging one. The same tag also serves as the encryption nonce. The file header and body MACs are longer and are the end-to-end integrity check.
+* **Replay protection depends on the clock.** Each side starts its replay high-water mark from the system clock when `asft` starts, and does not store it. If a node's clock is set backwards across a restart, previously captured requests may be accepted again. Keep clocks monotonic, for example with a working RTC or NTP, and do not restore an old clock value after a restart.
+
