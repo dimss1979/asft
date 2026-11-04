@@ -27,14 +27,17 @@ struct msg_hdr {
     uint8_t data[];
 } __attribute__((packed));
 
+/*
+ * Single name rule for both wire ends. The sender skips names that fail it,
+ * and the receiver rejects them, so the two never disagree about a file.
+ * A leading dot excludes hidden files and "." and "..".
+ */
 static bool filename_is_safe(const char *name, size_t len)
 {
     if (len == 0 || len > 255)
         return false;
 
-    /* Reject "." and ".." to prevent directory traversal. */
-    if ((len == 1 && name[0] == '.') ||
-        (len == 2 && name[0] == '.' && name[1] == '.'))
+    if (name[0] == '.')
         return false;
 
     for (size_t i = 0; i < len; i++) {
@@ -74,7 +77,7 @@ void asft_msg_tx_init(struct asft_msg_tx *tx, char *dir)
         char path_tmp[PATH_LEN];
         struct stat64 ls;
 
-        if (e->d_name[0] == '.')
+        if (!filename_is_safe(e->d_name, strlen(e->d_name)))
             continue;
         if (snprintf(path_tmp, sizeof(path_tmp), "%s/%s", dir, e->d_name) < 0)
             continue;
