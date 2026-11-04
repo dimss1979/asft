@@ -125,6 +125,23 @@ error:
     return rv;
 }
 
+/*
+ * chaSIV transform (committing, misuse-resistant AE), from
+ * S. Chen and V. Karadzic, "Committing Authenticated Encryption: Generic
+ * Transforms with Hash Functions", EUROCRYPT 2025, https://eprint.iacr.org/2025/320,
+ * Section 4.2, Fig. 11. Instantiation used here:
+ *
+ *   F(K, N)       = BLAKE2s-MAC keyed with K (32-byte output, used as Ke)
+ *   H(K, N, M)    = first 5 bytes of BLAKE2s-256(K || N || M)  (tag T)
+ *   E.Enc(Ke, Ne) = ChaCha20, key Ke, counter 0, nonce Ne || 0x00 * 7
+ *   Ne            = T (40 bits, zero-padded to the 96-bit ChaCha20 nonce)
+ *
+ * Deviations from the paper: the associated data AD is empty, and N is the
+ * 64-bit timestamp, of which only the low 16 bits are sent (the receiver
+ * rebuilds the rest from its clock). The paper's H is a random oracle; BLAKE2s
+ * with a key prefix is used as its stand-in.
+ */
+
 static int chaSIV_H(
     unsigned char *T,
     unsigned char *K,

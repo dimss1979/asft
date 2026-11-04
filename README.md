@@ -349,6 +349,10 @@ Basic encryption, authentication, and replay protection are implemented.
 Perfect Forward Secrecy (PFS) and Post-Compromise Security (PCS) are not currently implemented.
 Only symmetric encryption is used.
 
+### Packet encryption
+
+Packets use chaSIV, a committing, misuse-resistant AE transform built from a hash function, a PRF, and a stream cipher (ChaCha20). It is defined in Chen and Karadžić, [*Committing Authenticated Encryption: Generic Transforms with Hash Functions*](https://eprint.iacr.org/2025/320) (EUROCRYPT 2025), Section 4.2. The exact instantiation is documented in `asft_crypto.c`.
+
 ### Known trade-offs
 
 * **Short packet tag.** Each packet carries a 40-bit authentication tag, chosen to keep per-packet overhead low on slow links. An attacker who can inject packets has about a 2^-40 chance per attempt of forging one. The same tag also serves as the encryption nonce. The file header and body MACs are longer and are the end-to-end integrity check.
