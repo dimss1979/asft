@@ -68,6 +68,7 @@ It prints a new key and exits:
 You need one key per peer and one `network_id` key for the whole network.
 
 **Each peer must have a unique key.**
+The configuration is rejected if two peers share a key or a node label, or if `network_id` equals any peer key.
 
 Next, run `asft`.
 
@@ -191,6 +192,8 @@ Config parsing validates that `network_id` conforms to this format and fails to 
 
 Changing `network_id` changes all derived keys, so update all peers together.
 
+`network_id` must differ from every peer key. The configuration is rejected otherwise.
+
 ### port
 
 Serial port device and baudrate.
@@ -305,7 +308,7 @@ Label is used for:
 * derivation of incoming and outgoing directory names
 * log messages corresponding to particular node
 
-You must use unique labels to prevent confusion.
+You must use unique labels to prevent confusion. The configuration is rejected if two nodes share a label.
 
 Directory names follow the pattern: `to_label` and `from_label`.
 Both directories must be created in advance in the working directory of `asft`.

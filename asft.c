@@ -4,6 +4,10 @@
 //
 // clang -o asft -Wall -Werror -std=gnu11 *.c -lcrypto
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif /*_GNU_SOURCE*/
+
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
@@ -22,6 +26,85 @@ typedef enum {
 static op_mode_t op_mode = OM_UNKNOWN;
 static char *network_id = NULL;
 static bool config_check = false;
+
+/*
+ * Every key in the configuration is recorded here as decoded bytes, so that
+ * duplicates are detected whatever their base64 spelling. The network_id is
+ * recorded too: it is the HKDF salt and must not equal any peer key.
+ */
+struct cfg_key {
+    char *name;   /* for messages, e.g. "node node01" */
+    char *label;  /* node label, used for duplicate checks; NULL otherwise */
+    uint8_t key[ASFT_KEY_LEN];
+};
+
+static struct cfg_key *cfg_keys = NULL;
+static size_t cfg_keys_cnt = 0;
+
+static int cfg_key_add(const char *name, const char *label, const char *b64)
+{
+    struct cfg_key *tmp, *k;
+
+    tmp = realloc(cfg_keys, (cfg_keys_cnt + 1) * sizeof(*cfg_keys));
+    if (!tmp)
+        return 1;
+    cfg_keys = tmp;
+
+    k = &cfg_keys[cfg_keys_cnt];
+    memset(k, 0, sizeof(*k));
+
+    if (asft_crypto_key_decode(b64, k->key))
+        return 1;
+
+    if (label) {
+        if (asprintf(&k->name, "node %s", label) < 0)
+            return 1;
+        k->label = strdup(label);
+        if (!k->label)
+            return 1;
+    } else {
+        k->name = strdup(name);
+        if (!k->name)
+            return 1;
+    }
+
+    cfg_keys_cnt++;
+    return 0;
+}
+
+static void cfg_keys_free(void)
+{
+    for (size_t i = 0; i < cfg_keys_cnt; i++) {
+        free(cfg_keys[i].name);
+        free(cfg_keys[i].label);
+        explicit_bzero(cfg_keys[i].key, sizeof(cfg_keys[i].key));
+    }
+    free(cfg_keys);
+    cfg_keys = NULL;
+    cfg_keys_cnt = 0;
+}
+
+/* Returns 0 if all keys are distinct and node labels are unique, 1 otherwise. */
+static int cfg_keys_check(void)
+{
+    for (size_t i = 0; i < cfg_keys_cnt; i++) {
+        for (size_t j = i + 1; j < cfg_keys_cnt; j++) {
+            if (!memcmp(cfg_keys[i].key, cfg_keys[j].key, ASFT_KEY_LEN)) {
+                asft_error("%s and %s use the same key\n",
+                           cfg_keys[i].name, cfg_keys[j].name);
+                return 1;
+            }
+            if (cfg_keys[i].label && cfg_keys[j].label &&
+                !strcmp(cfg_keys[i].label, cfg_keys[j].label)) {
+                asft_error("Node label '%s' is used more than once\n",
+                           cfg_keys[i].label);
+                return 1;
+            }
+        }
+    }
+
+    return 0;
+}
 
 static int read_config_file(char *filename)
 {
@@ -83,6 +166,10 @@ static int read_config_file(char *filename)
             network_id = strdup(id);
             if (!network_id) {
                 asft_error("Cannot allocate network_id on line %i\n", line_number);
+                goto error;
+            }
+            if (cfg_key_add("network_id", NULL, id)) {
+                asft_error("Cannot record network_id on line %i\n", line_number);
                 goto error;
             }
         } else if (!strcmp(token, "port")) {
@@ -159,6 +246,10 @@ static int read_config_file(char *filename)
                 asft_error("Invalid node key on line %i: expected base64 256 bit key\n", line_number);
                 goto error;
             }
+            if (cfg_key_add("node", label, key)) {
+                asft_error("Cannot record node key on line %i\n", line_number);
+                goto error;
+            }
             if (asft_gateway_add_node(label, key)) {
                 asft_error("Cannot add node on line %i\n", line_number);
                 goto error;
@@ -178,6 +269,10 @@ static int read_config_file(char *filename)
                 asft_error("Invalid gateway key on line %i: expected base64 256 bit key\n", line_number);
                 goto error;
             }
+            if (cfg_key_add("gateway", NULL, key)) {
+                asft_error("Cannot record gateway key on line %i\n", line_number);
+                goto error;
+            }
             if (asft_node_set_gateway(label, key)) {
                 asft_error("Cannot set gateway on line %i\n", line_number);
                 goto error;
@@ -193,9 +288,16 @@ static int read_config_file(char *filename)
         goto error;
     }
 
+    if (cfg_keys_check()) {
+        asft_error("Invalid configuration: keys and labels must be unique, and network_id must differ from every peer key\n");
+        goto error;
+    }
+
     rv = 0;
 
 error:
+
+    cfg_keys_free();
 
     if (rv) {
         free(network_id);
