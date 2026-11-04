@@ -275,8 +275,11 @@ Watch `chronyc sources -v` and adjust `offset` until the reported offset settles
 
 `chronyd` creates the socket, so start it before `asft`.
 `chronyd` has no option to set the owner or mode of the socket.
-Either run `asft` as the `chrony` user, or give `chronyd` a more permissive `UMask=` in its service
-and add the `asft` user to the `chrony` group.
+Who can write to the socket decides who can feed time samples to `chronyd`, so keep that set as small as possible.
+
+* Preferred: run `asft` as the `chrony` user. With the usual umask of `022`, the socket is writable only by its owner, so no permissions need to be widened. Check the actual mode with `ls -l` on the socket.
+* If `asft` must run as another user, `chronyd` must create the socket group-writable (for example with `UMask=0007` in a drop-in for its service). The socket takes the group of the `chronyd` process, so run `chronyd` with a dedicated group (`Group=` in the same drop-in) that contains only the `asft` user. Do not add `asft` to a group that other services use, since every member of that group could then inject samples.
+
 `asft` only needs write access to this one socket.
 
 Limitations:
