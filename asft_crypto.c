@@ -610,7 +610,19 @@ int asft_encrypt_req(
     int rv = 1;
 
     union ts t;
-    ctx->timestamp = asft_timestamp();
+    uint64_t now = asft_timestamp();
+
+    /* Timestamps are nonces and replay marks: a packet needs a strictly newer
+     * one than the previous packet to this peer. When the round trip is faster
+     * than one timestamp step, wait for the next step. If the clock went
+     * backwards (now < ctx->timestamp), do not wait; the receiver will report
+     * a replay. */
+    while (now == ctx->timestamp) {
+        usleep(100);
+        now = asft_timestamp();
+    }
+
+    ctx->timestamp = now;
     t.be = htobe64(ctx->timestamp);
 
     rv = chaSIV_encrypt(cpkt, pkt, pkt_len, ctx->request_key, t.bytes);
