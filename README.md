@@ -42,6 +42,18 @@ Symlinks are allowed.
 Adjust build script as needed.
 OpenSSL 3.x is required.
 
+## Command-line Options
+
+`asft` accepts the following command-line options:
+
+* `<config_file>` — Run the gateway or node operation loop using the specified configuration file.
+* `-c <config_file>` — Verify the configuration without opening the serial port or starting file transfer. It derives the keys and prints every configured peer as a short fingerprint followed by the peer label:
+  ```
+  1a62bab27150946f node01
+  ```
+  Run it on both ends of a link. Peers that share the same key and `network_id` must print the same fingerprint. A different value means that the key or `network_id` does not match.
+* `-g` — Generate and print a new random 256-bit base64-encoded key, then exit.
+
 ## Run
 
 First, create a configuration file.
@@ -65,18 +77,6 @@ Note that there is no option to daemonize the process - this is not required the
 ```
 ./asft configuration_file.conf
 ```
-
-## Command-line Options
-
-`asft` accepts the following command-line options:
-
-* `<config_file>` — Run the gateway or node operation loop using the specified configuration file.
-* `-c <config_file>` — Verify the configuration without opening the serial port or starting file transfer. It derives the keys and prints every configured peer as a short fingerprint followed by the peer label:
-  ```
-  1a62bab27150946f node01
-  ```
-  Run it on both ends of a link. Peers that share the same key and `network_id` must print the same fingerprint. A different value means that the key or `network_id` does not match.
-* `-g` — Generate and print a new random 256-bit base64-encoded key, then exit.
 
 Sample configuration file for gateway:
 
