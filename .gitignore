@@ -1,2 +1,9 @@
 asft
 asft_keygen
+
+# Local configuration files (may contain real keys)
+*.conf
+
+# Data directories used by asft (received and pending files)
+from_*/
+to_*/

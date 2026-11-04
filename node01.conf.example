@@ -1,0 +1,15 @@
+# EXAMPLE ONLY. Do not use these values.
+# Generate real keys with: ./asft -g
+# network_id must be identical on the gateway and every node.
+# Each peer needs its own key. Copy to a file without .example before use.
+#
+# Sample configuration for node01
+#
+
+debug 1
+mode node
+# Must match the gateway. Generate with: ./asft -g
+network_id REPLACE_WITH_KEY_FROM_asft_-g
+port /dev/ttyUSB3 1200
+#serial_packet_loss 0.5
+gateway gw REPLACE_WITH_KEY_FROM_asft_-g

@@ -78,19 +78,21 @@ Note that there is no option to daemonize the process - this is not required the
 ./asft configuration_file.conf
 ```
 
+Sample configuration files are provided as `gateway.conf.example` and `node01.conf.example` (and `node02`, `node03`). They are examples only. Copy one to a file without the `.example` suffix and edit it. The real configuration files are ignored by git.
+
 Sample configuration file for gateway:
 
 ```
 debug 1
 mode gateway
-network_id Um4E0GBrkG0KItn4iuzqvJoThXAmnblIWxIWxHKIHfo=
+network_id REPLACE_WITH_KEY_FROM_asft_-g
 port /dev/ttyUSB0 1200
 retry_timeout 2
 backoff_time_max 60
 
-node node01 vJ58kVkmDb0zIZBJ1JKzGuH3QnV9jv52pUaNXPVF3Y4=
-#node node02 W0keehnv9CPUU3F7YpdsflIsbrwbbbtjcwBEG9bmtNU=
-#node node03 QZ4jGUZceZiPK2WkLfKQWrl6OY/n2fGoAfWqG4RRy34=
+node node01 REPLACE_WITH_KEY_FROM_asft_-g
+#node node02 REPLACE_WITH_KEY_FROM_asft_-g
+#node node03 REPLACE_WITH_KEY_FROM_asft_-g
 ```
 
 Sample configuration file for node01:
@@ -98,12 +100,12 @@ Sample configuration file for node01:
 ```
 debug 1
 mode node
-network_id Um4E0GBrkG0KItn4iuzqvJoThXAmnblIWxIWxHKIHfo=
+network_id REPLACE_WITH_KEY_FROM_asft_-g
 port /dev/ttyUSB1 1200
-gateway gw vJ58kVkmDb0zIZBJ1JKzGuH3QnV9jv52pUaNXPVF3Y4=
+gateway gw REPLACE_WITH_KEY_FROM_asft_-g
 ```
 
-The keys in the samples are placeholders. Replace them with output of `./asft -g`.
+The keys in the samples are placeholders and are not valid keys. The configuration parser rejects them. Replace each one with output of `./asft -g`.
 
 You need to create directories for incoming and outgoing files. At the gateway:
 
