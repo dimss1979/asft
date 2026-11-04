@@ -42,6 +42,8 @@ static int gateway_init(void)
 
     gw.msg_tx.crypto_ctx = gw.crypto_ctx;
     gw.msg_rx.crypto_ctx = gw.crypto_ctx;
+    gw.msg_tx.dir = ASFT_MSG_DIR_RESPONSE;
+    gw.msg_rx.dir = ASFT_MSG_DIR_REQUEST;
 
     return 0;
 

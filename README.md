@@ -341,7 +341,7 @@ to the network.
 By default, gateway and nodes must maintain clock synchronization within a few seconds.
 
 Each transmitted packet is encrypted and authenticated.
-Each file is additionally authenticated.
+Each file is additionally authenticated. File authentication keys are separate for each direction, so a file cannot be reflected back to its sender.
 Basic encryption, authentication, and replay protection are implemented.
 Perfect Forward Secrecy (PFS) and Post-Compromise Security (PCS) are not currently implemented.
 Only symmetric encryption is used.

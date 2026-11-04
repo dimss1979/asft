@@ -113,6 +113,8 @@ static int nodes_init(void)
 
         n->msg_tx.crypto_ctx = n->crypto_ctx;
         n->msg_rx.crypto_ctx = n->crypto_ctx;
+        n->msg_tx.dir = ASFT_MSG_DIR_REQUEST;
+        n->msg_rx.dir = ASFT_MSG_DIR_RESPONSE;
 
         n = n->next;
     }

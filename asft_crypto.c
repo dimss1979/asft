@@ -26,8 +26,18 @@ struct asft_crypto_ctx {
     uint64_t session_timestamp;
     uint8_t request_key[CHACHA_KEY_SIZE];
     uint8_t response_key[CHACHA_KEY_SIZE];
-    uint8_t msg_key[CHACHA_KEY_SIZE];
-    uint8_t msg_hdr_key[CHACHA_KEY_SIZE];
+    uint8_t msg_key[ASFT_MSG_DIR_COUNT][CHACHA_KEY_SIZE];
+    uint8_t msg_hdr_key[ASFT_MSG_DIR_COUNT][CHACHA_KEY_SIZE];
+};
+
+static const char *const msg_key_info[ASFT_MSG_DIR_COUNT] = {
+    "asft-message-key-request",
+    "asft-message-key-response",
+};
+
+static const char *const msg_hdr_key_info[ASFT_MSG_DIR_COUNT] = {
+    "asft-message-header-key-request",
+    "asft-message-header-key-response",
 };
 
 union ts {
@@ -42,7 +52,7 @@ static int HKDF(
     size_t keymat_len,
     void *salt,
     size_t salt_len,
-    void *info
+    const char *info
 ) {
     int rv = 1;
     EVP_KDF *kdf = NULL;
@@ -63,7 +73,7 @@ static int HKDF(
     *p++ = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_DIGEST, SN_blake2b512, strlen(SN_blake2b512));
     *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_KEY, keymat, keymat_len);
     *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_SALT, salt, salt_len);
-    *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_INFO, info, strlen(info));
+    *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_INFO, (void *) info, strlen(info));
     *p = OSSL_PARAM_construct_end();
 
     if (EVP_KDF_derive(kctx, key, key_len, params) != 1)
@@ -476,23 +486,25 @@ struct asft_crypto_ctx *asft_crypto_ctx_init(const char *key_b64, const char *ne
     if (rv)
         goto error;
 
-    rv = HKDF(
-        ctx->msg_key, sizeof(ctx->msg_key),
-        key, sizeof(key),
-        salt, sizeof(salt),
-        "asft-message-key"
-    );
-    if (rv)
-        goto error;
+    for (int dir = 0; dir < ASFT_MSG_DIR_COUNT; dir++) {
+        rv = HKDF(
+            ctx->msg_key[dir], sizeof(ctx->msg_key[dir]),
+            key, sizeof(key),
+            salt, sizeof(salt),
+            msg_key_info[dir]
+        );
+        if (rv)
+            goto error;
 
-    rv = HKDF(
-        ctx->msg_hdr_key, sizeof(ctx->msg_hdr_key),
-        key, sizeof(key),
-        salt, sizeof(salt),
-        "asft-message-header-key"
-    );
-    if (rv)
-        goto error;
+        rv = HKDF(
+            ctx->msg_hdr_key[dir], sizeof(ctx->msg_hdr_key[dir]),
+            key, sizeof(key),
+            salt, sizeof(salt),
+            msg_hdr_key_info[dir]
+        );
+        if (rv)
+            goto error;
+    }
 
     rv = 0;
 
@@ -705,6 +717,7 @@ error:
 
 int asft_sign_msg(
     struct asft_crypto_ctx *ctx,
+    enum asft_msg_dir dir,
     void *mac,
     size_t mac_len,
     void *msg,
@@ -713,7 +726,7 @@ int asft_sign_msg(
     union ts session_ts;
     session_ts.be = htobe64(ctx->session_timestamp);
 
-    if (blake2s_mac(mac, mac_len, ctx->msg_key, msg, msg_len, session_ts.bytes, ASFT_TS_LEN)) {
+    if (blake2s_mac(mac, mac_len, ctx->msg_key[dir], msg, msg_len, session_ts.bytes, ASFT_TS_LEN)) {
         asft_error("Message MAC calculation failed\n");
         return 1;
     }
@@ -723,6 +736,7 @@ int asft_sign_msg(
 
 int asft_verify_msg(
     struct asft_crypto_ctx *ctx,
+    enum asft_msg_dir dir,
     void *mac,
     size_t mac_len,
     void *msg,
@@ -732,7 +746,7 @@ int asft_verify_msg(
     union ts session_ts;
     session_ts.be = htobe64(ctx->session_timestamp);
 
-    if (blake2s_mac(actual_mac, mac_len, ctx->msg_key, msg, msg_len, session_ts.bytes, ASFT_TS_LEN)) {
+    if (blake2s_mac(actual_mac, mac_len, ctx->msg_key[dir], msg, msg_len, session_ts.bytes, ASFT_TS_LEN)) {
         asft_error("Message actual MAC calculation failed\n");
         return 1;
     }
@@ -745,6 +759,7 @@ int asft_verify_msg(
 
 int asft_sign_msg_hdr(
     struct asft_crypto_ctx *ctx,
+    enum asft_msg_dir dir,
     void *mac,
     size_t mac_len,
     void *msg_hdr,
@@ -753,7 +768,7 @@ int asft_sign_msg_hdr(
     union ts session_ts;
     session_ts.be = htobe64(ctx->session_timestamp);
 
-    if (blake2s_mac(mac, mac_len, ctx->msg_hdr_key, msg_hdr, msg_hdr_len, session_ts.bytes, ASFT_TS_LEN)) {
+    if (blake2s_mac(mac, mac_len, ctx->msg_hdr_key[dir], msg_hdr, msg_hdr_len, session_ts.bytes, ASFT_TS_LEN)) {
         asft_error("Message header MAC calculation failed\n");
         return 1;
     }
@@ -763,6 +778,7 @@ int asft_sign_msg_hdr(
 
 int asft_verify_msg_hdr(
     struct asft_crypto_ctx *ctx,
+    enum asft_msg_dir dir,
     void *mac,
     size_t mac_len,
     void *msg_hdr,
@@ -772,7 +788,7 @@ int asft_verify_msg_hdr(
     union ts session_ts;
     session_ts.be = htobe64(ctx->session_timestamp);
 
-    if (blake2s_mac(actual_mac, mac_len, ctx->msg_hdr_key, msg_hdr, msg_hdr_len, session_ts.bytes, ASFT_TS_LEN)) {
+    if (blake2s_mac(actual_mac, mac_len, ctx->msg_hdr_key[dir], msg_hdr, msg_hdr_len, session_ts.bytes, ASFT_TS_LEN)) {
         asft_error("Message header actual MAC calculation failed\n");
         return 1;
     }

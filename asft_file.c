@@ -173,6 +173,7 @@ void asft_msg_tx_init(struct asft_msg_tx *tx, char *dir)
 
     if (asft_sign_msg(
         tx->crypto_ctx,
+        tx->dir,
         hdr->mac,
         sizeof(hdr->mac),
         hdr->data,
@@ -184,6 +185,7 @@ void asft_msg_tx_init(struct asft_msg_tx *tx, char *dir)
 
     if (asft_sign_msg_hdr(
         tx->crypto_ctx,
+        tx->dir,
         hdr->hdr_mac,
         sizeof(hdr->hdr_mac),
         ((void*) hdr) + sizeof(hdr->hdr_mac),
@@ -268,6 +270,7 @@ int asft_msg_rx_receive(struct asft_msg_rx *rx, uint8_t pkt_seq, uint8_t *pkt_da
 
         if (asft_verify_msg_hdr(
             rx->crypto_ctx,
+            rx->dir,
             hdr->hdr_mac,
             sizeof(hdr->hdr_mac),
             ((void*) hdr) + sizeof(hdr->hdr_mac),
@@ -315,6 +318,7 @@ int asft_msg_rx_receive(struct asft_msg_rx *rx, uint8_t pkt_seq, uint8_t *pkt_da
 
         if (asft_verify_msg(
             rx->crypto_ctx,
+            rx->dir,
             hdr->mac,
             sizeof(hdr->mac),
             hdr->data,

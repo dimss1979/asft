@@ -83,6 +83,17 @@ void asft_serial_rx_time(struct timespec *ts);
 
 /* crypto */
 
+/*
+ * Direction of a message, i.e. the packet type that carries it. Each
+ * direction has its own message keys, so a message cannot be reflected
+ * into the other direction.
+ */
+enum asft_msg_dir {
+    ASFT_MSG_DIR_REQUEST = 0,   /* gateway -> node, carried in requests */
+    ASFT_MSG_DIR_RESPONSE = 1,  /* node -> gateway, carried in responses */
+    ASFT_MSG_DIR_COUNT
+};
+
 /* Short fingerprint over all four derived encryption keys, used by -c. */
 #define ASFT_FINGERPRINT_LEN     8
 #define ASFT_FINGERPRINT_HEX_LEN (ASFT_FINGERPRINT_LEN * 2)
@@ -134,6 +145,7 @@ int asft_decrypt_resp(
 
 int asft_sign_msg(
     struct asft_crypto_ctx *ctx,
+    enum asft_msg_dir dir,
     void *mac,
     size_t mac_len,
     void *msg,
@@ -142,6 +154,7 @@ int asft_sign_msg(
 
 int asft_verify_msg(
     struct asft_crypto_ctx *ctx,
+    enum asft_msg_dir dir,
     void *mac,
     size_t mac_len,
     void *msg,
@@ -150,6 +163,7 @@ int asft_verify_msg(
 
 int asft_sign_msg_hdr(
     struct asft_crypto_ctx *ctx,
+    enum asft_msg_dir dir,
     void *mac,
     size_t mac_len,
     void *msg_hdr,
@@ -158,6 +172,7 @@ int asft_sign_msg_hdr(
 
 int asft_verify_msg_hdr(
     struct asft_crypto_ctx *ctx,
+    enum asft_msg_dir dir,
     void *mac,
     size_t mac_len,
     void *msg_hdr,
@@ -173,6 +188,7 @@ struct asft_msg_tx {
     size_t msg_pos;
     uint8_t seq;
     void *crypto_ctx;
+    enum asft_msg_dir dir;
 };
 
 struct asft_msg_rx {
@@ -181,6 +197,7 @@ struct asft_msg_rx {
     size_t msg_pos;
     uint8_t ack;
     void *crypto_ctx;
+    enum asft_msg_dir dir;
 };
 
 void asft_msg_tx_init(struct asft_msg_tx *tx, char *dir);
