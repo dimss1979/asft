@@ -76,11 +76,6 @@ uint64_t asft_now()
     return now.tv_sec * 1000ULL + now.tv_nsec / 1000000ULL;
 }
 
-uint64_t asft_timestamp_to_ms(uint64_t timestamp)
-{
-    return timestamp * timestamp_step;
-}
-
 uint64_t asft_timestamp()
 {
     struct timespec now;

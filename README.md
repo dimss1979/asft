@@ -250,47 +250,6 @@ By default, maximum permissible sum of data packet transmission time and clock o
 Timestamp step must be smaller than data packet transmission time.
 Otherwise, some packets will fail to decrypt.
 
-### time_sync_socket
-
-(node only) Path to a `chronyd` SOCK refclock socket (default: disabled).
-
-When set, every authenticated short packet (a packet without a data block) received from the gateway
-is reported to `chronyd` as a time sample.
-The node can then discipline its clock from the gateway clock, even when it has no other time source.
-Use this together with a good time source at the gateway.
-Samples are sent over a fresh connection each time.
-If the socket cannot be opened or written to, an error is logged and file transfer continues unaffected.
-
-Example `chrony.conf` line on the node:
-
-```
-refclock SOCK /run/chrony/asft.sock refid ASFT poll 6 filter 16 precision 0.1 offset 0.1
-```
-
-The sample time is taken when the gateway built the packet, so it is behind by the packet transmission delay.
-This delay is constant for short packets.
-Compensate for it with the `offset` option of the `refclock` line.
-At 1200 baud a short packet occupies the line for about 80 ms, plus whatever delay radios or modems in the path add.
-Watch `chronyc sources -v` and adjust `offset` until the reported offset settles near zero.
-
-`chronyd` creates the socket, so start it before `asft`.
-`chronyd` has no option to set the owner or mode of the socket.
-Who can write to the socket decides who can feed time samples to `chronyd`, so keep that set as small as possible.
-
-* Preferred: run `asft` as the `chrony` user. With the usual umask of `022`, the socket is writable only by its owner, so no permissions need to be widened. Check the actual mode with `ls -l` on the socket.
-* If `asft` must run as another user, `chronyd` must create the socket group-writable (for example with `UMask=0007` in a drop-in for its service). The socket takes the group of the `chronyd` process, so run `chronyd` with a dedicated group (`Group=` in the same drop-in) that contains only the `asft` user. Do not add `asft` to a group that other services use, since every member of that group could then inject samples.
-
-`asft` only needs write access to this one socket.
-
-Limitations:
-
-* Clocks must already be within the usual window of a few seconds (see `timestamp_step`).
-  Packets cannot be decrypted otherwise, so time sync only corrects drift and small offsets.
-* Samples are authenticated but not protected from delay: an attacker who can hold back a packet
-  can skew one sample by up to the same window.
-* Samples arrive irregularly because of gateway backoff, so choose the `poll` and `filter` values accordingly.
-* Accuracy is limited by serial port and USB adapter read latency, typically tens of milliseconds.
-
 ### serial_packet_loss
 
 Packet loss probability in serial frame receive path (default: 0.0).
@@ -341,7 +300,7 @@ Each peer key is the input keying material for HKDF, and `network_id` is the
 HKDF salt. It is not a secret, but it must be identical on all peers and unique
 to the network.
 
-By default, gateway and nodes must maintain clock synchronization within a few seconds.
+Time must be kept in sync between the gateway and all nodes by whatever means (for example NTP, chrony, GPS, or a manually set and well-maintained RTC). `asft` does not synchronize clocks itself. Clocks must agree within a few seconds, otherwise packets cannot be decrypted.
 
 Each transmitted packet is encrypted and authenticated.
 Each file is additionally authenticated. File authentication keys are separate for each direction, so a file cannot be reflected back to its sender.
