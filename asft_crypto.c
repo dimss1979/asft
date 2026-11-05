@@ -657,10 +657,15 @@ int asft_decrypt_req(
     size_t cpkt_len
 ) {
     int64_t now = asft_timestamp();
-    union ts t;
-    t.be = htobe64(now);
-    memcpy(&t.bytes[ASFT_TS_HIDE], cpkt->timestamp, ASFT_TS_XMIT);
-    int64_t received = be64toh(t.be);
+
+    /* Reconstruct the received timestamp: high bytes from the local clock,
+     * low bytes from the packet. This is only an estimate until wrap-around
+     * is corrected below. */
+    union ts recv;
+    recv.be = htobe64(now);
+    memcpy(&recv.bytes[ASFT_TS_HIDE], cpkt->timestamp, ASFT_TS_XMIT);
+    int64_t received = be64toh(recv.be);
+
     int64_t diff = now - received;
     int64_t diff_max = 1ULL << (ASFT_TS_XMIT * 8 - 1);
 
@@ -671,13 +676,16 @@ int asft_decrypt_req(
         correction = -1;
 
     int64_t corrected = received + correction * (1ULL << (ASFT_TS_XMIT * 8));
+
+    /* Nonce for decryption is the full corrected timestamp */
+    union ts t;
     t.be = htobe64(corrected);
 
     int rv = chaSIV_decrypt(pkt, cpkt, cpkt_len, ctx->request_key, t.bytes);
     if (rv)
         return 1;
 
-    uint64_t timestamp_new = be64toh(t.be);
+    uint64_t timestamp_new = corrected;
 
     if (timestamp_new <= ctx->timestamp) {
         asft_error("Replay detected\n");
