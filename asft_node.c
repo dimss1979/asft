@@ -92,13 +92,6 @@ int asft_node_print_peers(void)
 
 static void process_req_data(asft_pkt *req, struct asft_pkt_flags *req_flags, asft_pkt *resp, size_t *resp_len, struct asft_pkt_flags *resp_flags, bool have_data)
 {
-    if (!gw.ready) {
-        asft_debug("Not ready\n");
-        *resp_len = sizeof(asft_pkt) - ASFT_BLOCK_LEN;
-        resp_flags->rst = 1;
-        return;
-    }
-
     if (have_data) {
         if (asft_msg_rx_receive(&gw.msg_rx, req_flags->seq, req->data, gw.download_dir)) {
             asft_error("Error while processing data packet\n");
@@ -165,6 +158,10 @@ int asft_node_loop(void)
             asft_crypto_set_session_timestamp(gw.crypto_ctx);
             gw.ready = true;
             resp_len = sizeof(asft_pkt) - ASFT_BLOCK_LEN;
+        } else if (!gw.ready) {
+            asft_debug("Not ready\n");
+            resp_len = sizeof(asft_pkt) - ASFT_BLOCK_LEN;
+            resp_flags.rst = 1;
         } else if (pkt_len == sizeof(asft_pkt) - ASFT_BLOCK_LEN) {
             process_req_data(&pkt, &req_flags, &resp, &resp_len, &resp_flags, false);
         } else {
