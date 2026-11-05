@@ -101,6 +101,7 @@ static void process_req_data(asft_pkt *req, struct asft_pkt_flags *req_flags, as
             gw.ready = false;
             *resp_len = sizeof(asft_pkt) - ASFT_BLOCK_LEN;
             resp_flags->rst = 1;
+            resp_flags->err = 1;
             return;
         }
     }

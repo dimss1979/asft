@@ -49,6 +49,12 @@ static void apply_backoff(struct node *n)
     n->pause_until = asft_now() + n->backoff_time * 1000;
 }
 
+static void apply_error_backoff(struct node *n)
+{
+    n->backoff_time = backoff_time_max / 2;
+    n->pause_until = asft_now() + n->backoff_time * 1000;
+}
+
 static void reset_backoff(struct node *n)
 {
     n->backoff_time = 0;
@@ -170,7 +176,8 @@ int asft_gateway_print_peers(void)
     return rv;
 }
 
-static void process_resp_data(struct node *n, asft_pkt *resp, struct asft_pkt_flags *resp_flags, bool have_data)
+/* Returns true if a local error occurred while processing the data packet. */
+static bool process_resp_data(struct node *n, asft_pkt *resp, struct asft_pkt_flags *resp_flags, bool have_data)
 {
     if (have_data) {
         if (asft_msg_rx_receive(&n->msg_rx, resp_flags->seq, resp->data, n->upload_dir)) {
@@ -179,12 +186,14 @@ static void process_resp_data(struct node *n, asft_pkt *resp, struct asft_pkt_fl
             asft_msg_tx_cancel(&n->msg_tx);
             asft_msg_rx_cancel(&n->msg_rx);
             n->ready = false;
-            return;
+            return true;
         }
     }
 
     asft_msg_tx_ack(&n->msg_tx, resp_flags->ack);
     asft_msg_tx_init(&n->msg_tx, n->download_dir);
+
+    return false;
 }
 
 int asft_gateway_loop(void)
@@ -251,6 +260,7 @@ int asft_gateway_loop(void)
         }
 
         bool got_response = false;
+        bool error_seen = false;
         timeout = asft_now() + retry_timeout * 1000;
         while(timeout > asft_now() && !got_response) {
             rv = asft_serial_receive((unsigned char**) &cresp, &rx_packet_len);
@@ -277,6 +287,11 @@ int asft_gateway_loop(void)
             asft_pkt_flags_decode(&resp_flags, resp.flags);
             got_response = true;
 
+            if (resp_flags.err) {
+                asft_debug("Node '%s' reported receive error\n", n->label);
+                error_seen = true;
+            }
+
             if (resp_flags.rst) {
                 asft_debug("Node '%s' is not ready\n", n->label);
                 asft_msg_tx_cancel(&n->msg_tx);
@@ -290,9 +305,11 @@ int asft_gateway_loop(void)
                 asft_msg_rx_cancel(&n->msg_rx);
                 n->ready = true;
             } else if (rx_packet_len == (sizeof(asft_pkt) - ASFT_BLOCK_LEN)) {
-                process_resp_data(n, &resp, &resp_flags, false);
+                if (process_resp_data(n, &resp, &resp_flags, false))
+                    error_seen = true;
             } else {
-                process_resp_data(n, &resp, &resp_flags, true);
+                if (process_resp_data(n, &resp, &resp_flags, true))
+                    error_seen = true;
                 keep_talking = true;
             }
         };
@@ -300,7 +317,9 @@ int asft_gateway_loop(void)
         if (!got_response)
             asft_debug("No response\n");
 
-        if (!keep_talking || !got_response) {
+        if (error_seen) {
+            apply_error_backoff(n);
+        } else if (!keep_talking || !got_response) {
             apply_backoff(n);
         } else {
             reset_backoff(n);
