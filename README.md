@@ -279,6 +279,7 @@ When a node does not respond or there is no data to transfer, the gateway will p
 - Each subsequent timeout doubles the pause time (2s, 4s, 8s, etc.)
 - Maximum pause time is limited by `backoff_time_max`
 - When a response is received and there is data to transfer, the backoff is reset to zero
+- When a "error while processing data packet" condition occurs, either on the gateway or on the node, the backoff is set to half of `backoff_time_max`. The node signals its own error to the gateway with the `err` flag in its response
 
 ### timestamp_step
 

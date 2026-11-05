@@ -37,10 +37,12 @@ struct asft_pkt_flags {
     uint8_t rst;
     uint8_t seq;
     uint8_t ack;
+    uint8_t err;
 };
 
 static inline void asft_pkt_flags_decode(struct asft_pkt_flags *o, uint8_t i)
 {
+    o->err = (i >> 3) & 1;
     o->rst = (i >> 2) & 1;
     o->seq = (i >> 1) & 1;
     o->ack = (i >> 0) & 1;
@@ -49,6 +51,7 @@ static inline void asft_pkt_flags_decode(struct asft_pkt_flags *o, uint8_t i)
 static inline uint8_t asft_pkt_flags_encode(struct asft_pkt_flags *i)
 {
     return
+        ((i->err & 1) << 3) |
         ((i->rst & 1) << 2) |
         ((i->seq & 1) << 1) |
         ((i->ack & 1) << 0);
