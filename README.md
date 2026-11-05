@@ -47,66 +47,111 @@ OpenSSL 3.x is required.
 `asft` accepts the following command-line options:
 
 * `<config_file>` — Run the gateway or node operation loop using the specified configuration file.
-* `-c <config_file>` — Verify the configuration without opening the serial port or starting file transfer. It derives the keys and prints every configured peer as a short fingerprint followed by the peer label:
+* `-c <config_file>` — Verify the configuration without opening the serial port or starting file transfer. It derives the keys and prints one line per configured link: a short fingerprint followed by the peer label:
   ```
   1a62bab27150946f node01
   ```
-  Run it on both ends of a link. Peers that share the same key and `network_id` must print the same fingerprint. A different value means that the key or `network_id` does not match.
+  Run it on both ends of a link and compare the fingerprint for that link. The gateway's `node` line and the node's `gateway` line must print the same fingerprint, even though their labels differ. A mismatch means the two configurations do not contain the same link key, or their `network_id` values differ.
 * `-g` — Generate and print a new random 256-bit base64-encoded key, then exit.
 
 ## Run
 
-First, create a configuration file.
+First, create a configuration file on each host.
 Every key is a random 256-bit value encoded in base64.
-Generate keys with `-g`, similar to `wg genpsk`.
-It prints a new key and exits:
+Two different kinds of key are used, and they are not interchangeable:
+
+| Value | Where it appears | How many |
+| --- | --- | --- |
+| `network_id` | one `network_id` line in the gateway config and in every node config | one per network, identical everywhere |
+| Link key for `node01` | gateway: `node node01 <key>`; node01: `gateway <label> <key>` | one per gateway–node link, written in exactly those two files |
+
+`network_id` is a salt, not a secret.
+A link key is the key shared by the two ends of one gateway–node link: the gateway and that node necessarily use the same key for that link.
+It is not a separate "gateway key".
+A gateway with three nodes has three link keys, and each node configuration contains only the key for its own link.
+
+Uniqueness is per link: all `node` lines in one gateway configuration must have different keys (and different labels).
+The configuration is rejected if two `node` lines share a key or a label, or if `network_id` equals any peer key.
+Sharing a key between the two ends of the same link is required, not an error.
+
+Generate one key per link plus one for `network_id`.
+`-g` prints a new random key and exits, similar to `wg genpsk`:
 
 ```
 ./asft -g
 ```
 
-You need one key per peer and one `network_id` key for the whole network.
+For a gateway with three nodes, run it four times: once for `network_id` and once for each of node01, node02 and node03.
+Keep track of which key belongs to which node.
 
-**Each peer must have a unique key.**
-The configuration is rejected if two peers share a key or a node label, or if `network_id` equals any peer key.
-
-Next, run `asft`.
-
-You can run it manually or under supervision of `systemd` or `procd` if you wish.
-Note that there is no option to daemonize the process - this is not required these days.
-
-```
-./asft configuration_file.conf
-```
-
-Sample configuration files are provided as `gateway.conf.example` and `node01.conf.example` (and `node02`, `node03`). They are examples only. Copy one to a file without the `.example` suffix and edit it. The real configuration files are ignored by git.
-
-Sample configuration file for gateway:
+Sample configuration file for gateway (`gateway.conf`):
 
 ```
 debug 1
 mode gateway
-network_id REPLACE_WITH_KEY_FROM_asft_-g
+network_id NETWORK_KEY
 port /dev/ttyUSB0 1200
 retry_timeout 2
 backoff_time_max 60
 
-node node01 REPLACE_WITH_KEY_FROM_asft_-g
-#node node02 REPLACE_WITH_KEY_FROM_asft_-g
-#node node03 REPLACE_WITH_KEY_FROM_asft_-g
+node node01 NODE01_KEY
+#node node02 NODE02_KEY
+#node node03 NODE03_KEY
 ```
 
-Sample configuration file for node01:
+Sample configuration file for node01 (`node01.conf`):
 
 ```
 debug 1
 mode node
-network_id REPLACE_WITH_KEY_FROM_asft_-g
+network_id NETWORK_KEY
 port /dev/ttyUSB1 1200
-gateway gw REPLACE_WITH_KEY_FROM_asft_-g
+gateway gw NODE01_KEY
 ```
 
-The keys in the samples are placeholders and are not valid keys. The configuration parser rejects them. Replace each one with output of `./asft -g`.
+`NETWORK_KEY` is the same value in every configuration file.
+`NODE01_KEY` is the same value in the gateway's `node node01` line and in node01's `gateway` line.
+`NODE02_KEY` and `NODE03_KEY` are different values, each used by its own node.
+
+The placeholders are not valid keys and the configuration parser rejects them.
+Replace each one with output of `./asft -g`.
+Do not copy the same generated key into several `node` lines.
+
+Check every link before starting the transfer.
+`-c` validates the configuration and prints one fingerprint per configured link.
+On the gateway:
+
+```
+./asft -c gateway.conf
+```
+```
+1a62bab27150946f node01
+```
+
+On node01:
+
+```
+./asft -c node01.conf
+```
+```
+1a62bab27150946f gw
+```
+
+The gateway's `node01` fingerprint must equal the fingerprint printed on node01, even though the labels differ (`node01` versus `gw`).
+That equality proves that the two files contain the same link key and the same `network_id`.
+If the fingerprints differ, fix the key or `network_id` before running `asft`.
+
+Next, run `asft` on each host with its own configuration file:
+
+```
+./asft gateway.conf
+./asft node01.conf
+```
+
+You can run it manually or under supervision of `systemd` or `procd` if you wish.
+Note that there is no option to daemonize the process - this is not required these days.
+
+Sample configuration files are provided as `gateway.conf.example` and `node01.conf.example` (and `node02`, `node03`). They are examples only. Copy one to a file without the `.example` suffix and edit it. The real configuration files are ignored by git.
 
 You need to create directories for incoming and outgoing files. At the gateway:
 
@@ -261,7 +306,9 @@ This option is for testing purposes only, to simulate unreliable communication c
 
 ### node
 
-(gateway only) Label and base64 256-bit key for a peer node.
+(gateway only) Label and base64 256-bit link key for a peer node.
+
+This key must be the same as the key on the `gateway` line in that node's configuration. It is the key for this gateway–node link only; every `node` line on the gateway must use a different key.
 
 The key must be a valid 256-bit key generated with `./asft -g` (exactly 44 base64 characters). Config parsing validates the key format on startup.
 
@@ -279,7 +326,9 @@ You can specify multiple nodes for multipoint operation if transmission medium p
 
 ### gateway
 
-(node only) Label and base64 256-bit key for the gateway.
+(node only) Label and base64 256-bit link key for the gateway.
+
+This key must be the same as the key on the gateway's `node` line for this node. It is the key for this gateway–node link only; it is not a key shared by all nodes.
 
 The key must be a valid 256-bit key generated with `./asft -g` (exactly 44 base64 characters). Config parsing validates the key format on startup.
 

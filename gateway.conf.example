@@ -1,7 +1,8 @@
 # EXAMPLE ONLY. Do not use these values.
 # Generate real keys with: ./asft -g
-# network_id must be identical on the gateway and every node.
-# Each peer needs its own key. Copy to a file without .example before use.
+# NETWORK_KEY must be identical on the gateway and every node.
+# Each node link has its own key. NODE01_KEY here must match
+# NODE01_KEY in node01.conf. Copy to a file without .example before use.
 #
 # Sample configuration for gateway
 #
@@ -9,12 +10,12 @@
 debug 1
 mode gateway
 # Must match all nodes. Generate with: ./asft -g
-network_id REPLACE_WITH_KEY_FROM_asft_-g
+network_id NETWORK_KEY
 port /dev/ttyUSB4 1200
 #serial_packet_loss 0.5
 retry_timeout 2
 backoff_time_max 10
 
-node node01 REPLACE_WITH_KEY_FROM_asft_-g
-#node node02 REPLACE_WITH_KEY_FROM_asft_-g
-#node node03 REPLACE_WITH_KEY_FROM_asft_-g
+node node01 NODE01_KEY
+#node node02 NODE02_KEY
+#node node03 NODE03_KEY
