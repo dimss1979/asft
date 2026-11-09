@@ -1,6 +1,7 @@
 #ifndef _ASFT_H_
 #define _ASFT_H_
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <time.h>
@@ -202,6 +203,32 @@ void asft_msg_tx_cancel(struct asft_msg_tx *tx);
 int asft_msg_rx_receive(struct asft_msg_rx *rx, uint8_t pkt_seq, uint8_t *pkt_data, char *dir);
 void asft_msg_rx_get_ack(struct asft_msg_rx *rx, uint8_t *ack);
 void asft_msg_rx_cancel(struct asft_msg_rx *rx);
+
+/* peer */
+
+/*
+ * State of a remote peer, shared by node and gateway modes. A node keeps a
+ * single peer (its gateway); a gateway keeps a linked list of peer nodes.
+ * Fields only used in gateway mode are marked as such.
+ */
+struct asft_peer {
+    struct asft_peer *next;             /* gateway: peer list */
+    char *label;
+    char key[ASFT_KEY_B64_LEN + 1];
+    struct asft_crypto_ctx *crypto_ctx;
+
+    uint64_t pause_until;               /* gateway */
+    uint32_t backoff_time;              /* gateway */
+    bool ready;
+
+    struct asft_msg_tx msg_tx;
+    struct asft_msg_rx msg_rx;
+    char *upload_dir;
+    char *download_dir;
+};
+
+int asft_peer_set_label_key(struct asft_peer *peer, const char *label, const char *key);
+void asft_peer_clear_key(struct asft_peer *peer);
 
 /* node */
 

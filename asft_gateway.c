@@ -13,30 +13,13 @@
 
 #include "asft.h"
 
-struct node
-{
-    struct node *next;
-    char *label;
-    char *key;
-    struct asft_crypto_ctx *crypto_ctx;
-
-    uint64_t pause_until;
-    uint32_t backoff_time;
-    bool ready;
-
-    struct asft_msg_tx msg_tx;
-    struct asft_msg_rx msg_rx;
-    char *upload_dir;
-    char *download_dir;
-};
-
-static struct node *node_first = NULL;
-static unsigned int node_cnt = 0;
+static struct asft_peer *peer_first = NULL;
+static unsigned int peer_cnt = 0;
 
 static int retry_timeout = 5;
 static uint32_t backoff_time_max = 60;
 
-static void apply_backoff(struct node *n)
+static void apply_backoff(struct asft_peer *n)
 {
     if (n->backoff_time == 0) {
         n->backoff_time = 1;
@@ -49,13 +32,13 @@ static void apply_backoff(struct node *n)
     n->pause_until = asft_now() + n->backoff_time * 1000;
 }
 
-static void apply_error_backoff(struct node *n)
+static void apply_error_backoff(struct asft_peer *n)
 {
     n->backoff_time = backoff_time_max / 2;
     n->pause_until = asft_now() + n->backoff_time * 1000;
 }
 
-static void reset_backoff(struct node *n)
+static void reset_backoff(struct asft_peer *n)
 {
     n->backoff_time = 0;
     n->pause_until = 0;
@@ -64,7 +47,7 @@ static void reset_backoff(struct node *n)
 static void unpause_for_download()
 {
     uint64_t now = asft_now();
-    struct node *n = node_first;
+    struct asft_peer *n = peer_first;
 
     while (n)
     {
@@ -79,17 +62,17 @@ static void unpause_for_download()
     }
 }
 
-static struct node *node_pick_next(struct node *cur)
+static struct asft_peer *node_pick_next(struct asft_peer *cur)
 {
-    struct node *n = NULL;
+    struct asft_peer *n = NULL;
     uint64_t now = asft_now();
 
     if (cur)
         n = cur->next;
 
-    for (unsigned int i = 0; i < node_cnt; i++) {
+    for (unsigned int i = 0; i < peer_cnt; i++) {
         if (!n)
-            n = node_first;
+            n = peer_first;
 
         if (n->pause_until <= now) {
             return n;
@@ -103,14 +86,14 @@ static struct node *node_pick_next(struct node *cur)
 
 static int nodes_init(void)
 {
-    struct node *n;
+    struct asft_peer *n;
 
-    if (!node_cnt) {
+    if (!peer_cnt) {
         asft_error("No nodes configured\n");
         goto error;
     }
 
-    n = node_first;
+    n = peer_first;
     while (n) {
         if (asprintf(&n->upload_dir, "from_%s", n->label) < 0)
             goto error;
@@ -134,9 +117,9 @@ error:
 
 int asft_gateway_init_crypto(char *network_id)
 {
-    struct node *n = node_first;
+    struct asft_peer *n = peer_first;
 
-    if (!node_cnt) {
+    if (!peer_cnt) {
         asft_error("No nodes configured\n");
         return -1;
     }
@@ -146,9 +129,7 @@ int asft_gateway_init_crypto(char *network_id)
         if (!n->crypto_ctx)
             return -1;
 
-        explicit_bzero(n->key, strlen(n->key));
-        free(n->key);
-        n->key = NULL;
+        asft_peer_clear_key(n);
 
         n = n->next;
     }
@@ -159,7 +140,7 @@ int asft_gateway_init_crypto(char *network_id)
 int asft_gateway_print_peers(void)
 {
     char fingerprint[ASFT_FINGERPRINT_HEX_LEN + 1];
-    struct node *n = node_first;
+    struct asft_peer *n = peer_first;
     int rv = 0;
 
     while (n) {
@@ -177,7 +158,7 @@ int asft_gateway_print_peers(void)
 }
 
 /* Returns true if a local error occurred while processing the data packet. */
-static bool process_resp_data(struct node *n, asft_pkt *resp, struct asft_pkt_flags *resp_flags, bool have_data)
+static bool process_resp_data(struct asft_peer *n, asft_pkt *resp, struct asft_pkt_flags *resp_flags, bool have_data)
 {
     if (have_data) {
         if (asft_msg_rx_receive(&n->msg_rx, resp_flags->seq, resp->data, n->upload_dir)) {
@@ -199,7 +180,7 @@ static bool process_resp_data(struct node *n, asft_pkt *resp, struct asft_pkt_fl
 int asft_gateway_loop(void)
 {
     int rv;
-    struct node *n = NULL;
+    struct asft_peer *n = NULL;
     uint64_t timeout;
 
     if (nodes_init()) {
@@ -331,29 +312,19 @@ int asft_gateway_loop(void)
 
 int asft_gateway_add_node(char *label, char *key)
 {
-    struct node *new = NULL;
-
-    if (strchr(label, '/')) {
-        asft_error("Invalid label - contains slash\n");
-        goto error;
-    }
+    struct asft_peer *new = NULL;
 
     new = malloc(sizeof(*new));
     if (!new)
         goto error;
     memset(new, 0, sizeof(*new));
 
-    new->label = strdup(label);
-    if (!new->label)
+    if (asft_peer_set_label_key(new, label, key))
         goto error;
 
-    new->key = strdup(key);
-    if (!new->key)
-        goto error;
-
-    new->next = node_first;
-    node_first = new;
-    node_cnt++;
+    new->next = peer_first;
+    peer_first = new;
+    peer_cnt++;
 
     return 0;
 
@@ -361,10 +332,6 @@ error:
 
     if (new) {
         free(new->label);
-        if (new->key) {
-            explicit_bzero(new->key, strlen(new->key));
-            free(new->key);
-        }
         free(new);
     }
 
