@@ -42,49 +42,50 @@ Only readable regular files are sent. Symlinks are ignored.
 Adjust build script as needed.
 OpenSSL 3.x is required.
 
-## Command-line Options
+## Command-line options
 
-`asft` accepts the following command-line options:
+```
+asft <config_file>       Run the gateway or node using this configuration
+asft -c <config_file>    Check the configuration and print link fingerprints
+asft -g                  Generate a new random key and exit
+```
 
-* `<config_file>` — Run the gateway or node operation loop using the specified configuration file.
-* `-c <config_file>` — Verify the configuration without opening the serial port or starting file transfer. It derives the keys and prints one line per configured link: a short fingerprint followed by the peer label:
-  ```
-  1a62bab27150946f node01
-  ```
-  Run it on both ends of a link and compare the fingerprint for that link. The gateway's `node` line and the node's `gateway` line must print the same fingerprint, even though their labels differ. A mismatch means the two configurations do not contain the same link key, or their `network_id` values differ.
-* `-g` — Generate and print a new random 256-bit base64-encoded key, then exit.
+`-c` derives the keys without opening the serial port or transferring files.
+It prints one line per configured link: a short fingerprint and the peer label.
+
+```
+1a62bab27150946f node01
+```
+
+`-g` prints a random 256-bit key encoded in base64.
 
 ## Run
 
-First, create a configuration file on each host.
-Every key is a random 256-bit value encoded in base64.
-Two different kinds of key are used, and they are not interchangeable:
+### 1. Generate keys
 
-| Value | Where it appears | How many |
-| --- | --- | --- |
-| `network_id` | one `network_id` line in the gateway config and in every node config | one per network, identical everywhere |
-| Link key for `node01` | gateway: `node node01 <key>`; node01: `gateway <label> <key>` | one per gateway–node link, written in exactly those two files |
+Two kinds of key are used:
 
-`network_id` is a salt, not a secret.
-A link key is the key shared by the two ends of one gateway–node link: the gateway and that node necessarily use the same key for that link.
-It is not a separate "gateway key".
-A gateway with three nodes has three link keys, and each node configuration contains only the key for its own link.
+* `network_id` — one per network, identical in every config file. It is a salt, not a secret.
+* Link key — one per gateway–node link. It appears in exactly two files: the gateway's `node` line and that node's `gateway` line.
 
-Uniqueness is per link: all `node` lines in one gateway configuration must have different keys (and different labels).
-The configuration is rejected if two `node` lines share a key or a label, or if `network_id` equals any peer key.
-Sharing a key between the two ends of the same link is required, not an error.
-
-Generate one key per link plus one for `network_id`.
-`-g` prints a new random key and exits, similar to `wg genpsk`:
+A gateway with three nodes needs four keys: one `network_id` and three link keys.
+Generate each with:
 
 ```
 ./asft -g
 ```
 
-For a gateway with three nodes, run it four times: once for `network_id` and once for each of node01, node02 and node03.
-Keep track of which key belongs to which node.
+Rules:
 
-Sample configuration file for gateway (`gateway.conf`):
+* The two ends of a link must use the same link key.
+* All `node` lines in one gateway config must have different keys and different labels.
+* `network_id` must differ from every link key.
+
+The configuration is rejected if any of these is violated.
+
+### 2. Write configuration files
+
+Gateway (`gateway.conf`):
 
 ```
 debug 1
@@ -99,7 +100,7 @@ node node01 NODE01_KEY
 #node node03 NODE03_KEY
 ```
 
-Sample configuration file for node01 (`node01.conf`):
+Node (`node01.conf`):
 
 ```
 debug 1
@@ -109,81 +110,74 @@ port /dev/ttyUSB1 1200
 gateway gw NODE01_KEY
 ```
 
-`NETWORK_KEY` is the same value in every configuration file.
-`NODE01_KEY` is the same value in the gateway's `node node01` line and in node01's `gateway` line.
-`NODE02_KEY` and `NODE03_KEY` are different values, each used by its own node.
+Replace the placeholders with keys from `./asft -g`. The placeholders are not valid keys and are rejected.
 
-The placeholders are not valid keys and the configuration parser rejects them.
-Replace each one with output of `./asft -g`.
-Do not copy the same generated key into several `node` lines.
+* `NETWORK_KEY` is the same in every file.
+* `NODE01_KEY` is the same in the gateway's `node node01` line and in node01's `gateway` line.
+* `NODE02_KEY` and `NODE03_KEY` are different keys, each used by its own node.
 
-Check every link before starting the transfer.
-`-c` validates the configuration and prints one fingerprint per configured link.
-On the gateway:
+Ready-made templates are provided as `gateway.conf.example` and `node01.conf.example` (also `node02`, `node03`).
+Copy one without the `.example` suffix and edit it. Real configuration files are ignored by git.
+
+### 3. Verify each link
+
+Run `-c` on both ends:
 
 ```
 ./asft -c gateway.conf
-```
-```
 1a62bab27150946f node01
-```
 
-On node01:
-
-```
 ./asft -c node01.conf
-```
-```
 1a62bab27150946f gw
 ```
 
-The gateway's `node01` fingerprint must equal the fingerprint printed on node01, even though the labels differ (`node01` versus `gw`).
-That equality proves that the two files contain the same link key and the same `network_id`.
-If the fingerprints differ, fix the key or `network_id` before running `asft`.
+The fingerprints must match, even though the labels differ.
+A mismatch means the link key or `network_id` is different in the two files. Fix it before continuing.
 
-Next, run `asft` on each host with its own configuration file:
+### 4. Create directories
+
+Directory names come from peer labels: `to_<label>` and `from_<label>`.
+Create them in the working directory of `asft`.
+
+On the gateway (for three nodes):
+
+```
+mkdir from_node01 from_node02 from_node03
+mkdir to_node01 to_node02 to_node03
+```
+
+On each node:
+
+```
+mkdir from_gw to_gw
+```
+
+A file placed in the gateway's `to_node01` arrives in node01's `from_gw`.
+A file placed in node01's `to_gw` arrives in the gateway's `from_node01`.
+
+### 5. Start
+
+Run on each host with its own configuration:
 
 ```
 ./asft gateway.conf
 ./asft node01.conf
 ```
 
-You can run it manually or under supervision of `systemd` or `procd` if you wish.
-Note that there is no option to daemonize the process - this is not required these days.
+Run it manually or under `systemd` or `procd`.
+There is no daemonize option.
 
-Sample configuration files are provided as `gateway.conf.example` and `node01.conf.example` (and `node02`, `node03`). They are examples only. Copy one to a file without the `.example` suffix and edit it. The real configuration files are ignored by git.
+### Sending files
 
-You need to create directories for incoming and outgoing files. At the gateway:
+A file is picked up as soon as it appears under a normal name in a `to_<label>` directory.
+To avoid sending a half-written file, choose one of these ways, best first:
 
-```
-from_node01
-from_node02
-from_node03
-to_node01
-to_node02
-to_node03
-```
+1. **Best:** create a temporary file whose name begins with a dot (for example `.report.tmp`) in the `to_<label>` directory itself, write it, then rename it to the final name. Names beginning with a dot are ignored by `asft`, and a rename within one directory is atomic.
+2. **Second best:** write the file in another directory, then move it into the `to_<label>` directory. Both directories must be on the same filesystem, otherwise the move is a copy and is not atomic.
+3. **Not recommended:** write the file directly under its final name in the `to_<label>` directory. `asft` may pick it up before writing is finished, and only part of the file will be transferred.
 
-At each node:
-
-```
-from_gw
-to_gw
-```
-
-Directory names are derived from node labels.
-Files are picked from the corresponding `to_node_label` directory of the gateway, transferred to that node, and placed in its `from_gw` directory.
-In the opposite direction, files travel from `to_gw` to `from_node_label` directory.
-
-The user is advised to write their data to a temporary file in another directory.
-Files whose names begin with a dot are ignored by `asft`.
-The same `to_label` directory can be used if your temporary file name begins with a dot.
-Then move/rename the file into the `to_label` directory.
-The file is ready for transfer.
-Symlinks in the `to_label` directory are not transferred, so do not use them.
-
-When multiple files are available, they are transferred in ascending `ctime` order.
-In other words, the regular file moved first into the `to_label` directory is transferred first.
+* Symlinks are not transferred.
+* Multiple files are sent in ascending `ctime` order: the file moved in first is sent first.
 
 ## Gateway operation
 
