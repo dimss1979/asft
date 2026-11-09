@@ -11,19 +11,7 @@
 
 #include "asft.h"
 
-static struct gateway
-{
-    char *label;
-    char *key;
-    struct asft_crypto_ctx *crypto_ctx;
-
-    bool ready;
-
-    struct asft_msg_tx msg_tx;
-    struct asft_msg_rx msg_rx;
-    char *upload_dir;
-    char *download_dir;
-} gw = { 0 };
+static struct asft_peer gw = { 0 };
 
 static int gateway_init(void)
 {
@@ -58,7 +46,7 @@ int asft_node_init_crypto(char *network_id)
         asft_error("Gateway not specified\n");
         return -1;
     }
-    if (!gw.key) {
+    if (!gw.key[0]) {
         asft_error("Gateway key not specified\n");
         return -1;
     }
@@ -69,9 +57,7 @@ int asft_node_init_crypto(char *network_id)
 
     asft_crypto_timestamp_init(gw.crypto_ctx);
 
-    explicit_bzero(gw.key, strlen(gw.key));
-    free(gw.key);
-    gw.key = NULL;
+    asft_peer_clear_key(&gw);
 
     return 0;
 }
@@ -191,34 +177,5 @@ int asft_node_loop(void)
 
 int asft_node_set_gateway(char *label, char *key)
 {
-    if (strchr(label, '/')) {
-        asft_error("Invalid label - contains slash\n");
-        goto error;
-    }
-
-    char *new_label = strdup(label);
-    char *new_key = strdup(key);
-    if (!new_label || !new_key) {
-        free(new_label);
-        if (new_key) {
-            explicit_bzero(new_key, strlen(new_key));
-            free(new_key);
-        }
-        goto error;
-    }
-
-    free(gw.label);
-    if (gw.key) {
-        explicit_bzero(gw.key, strlen(gw.key));
-        free(gw.key);
-    }
-
-    gw.label = new_label;
-    gw.key = new_key;
-
-    return 0;
-
-error:
-
-    return -1;
+    return asft_peer_set_label_key(&gw, label, key);
 }
