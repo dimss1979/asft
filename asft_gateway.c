@@ -182,6 +182,7 @@ int asft_gateway_loop(void)
     int rv;
     struct asft_peer *n = NULL;
     uint64_t timeout;
+    bool talk_same_node = false;
 
     if (nodes_init()) {
         asft_error("Initialization failed\n");
@@ -191,7 +192,10 @@ int asft_gateway_loop(void)
     while(1)
     {
         unpause_for_download();
-        n = node_pick_next(n);
+        if (talk_same_node && n)
+            talk_same_node = false;
+        else
+            n = node_pick_next(n);
 
         if (!n) {
             sleep(1);
@@ -201,40 +205,54 @@ int asft_gateway_loop(void)
         asft_debug("Picked node '%s'\n", n->label);
 
         asft_pkt pkt = {0}, cpkt = {0}, resp = {0};
+        asft_key_pkt kpkt = {0};
         asft_pkt *cresp = NULL;
         size_t pkt_len = 0, rx_packet_len = 0;
         bool keep_talking = false;
         struct asft_pkt_flags req_flags = {0};
+        void *tx_buf = &cpkt;
 
-        if (n->ready) {
-            asft_msg_tx_init(&n->msg_tx, n->download_dir);
-            if (n->msg_tx.msg) {
-                pkt_len = sizeof(asft_pkt);
+        if (!n->session_key_established) {
+            asft_debug("Session key not established for node '%s'\n", n->label);
+            pkt_len = sizeof(asft_key_pkt);
+            tx_buf = &kpkt;
 
-                asft_msg_tx_send(&n->msg_tx, &req_flags.seq, pkt.data);
-                keep_talking = true;
-            } else {
-                pkt_len = sizeof(asft_pkt) - ASFT_BLOCK_LEN;
+            if (asft_crypto_kex_request(n->crypto_ctx, &kpkt)) {
+                asft_error("Node '%s' cannot build key exchange request\n", n->label);
+                return 1;
             }
-            asft_msg_rx_get_ack(&n->msg_rx, &req_flags.ack);
         } else {
-            asft_debug("Sending reset to '%s'\n", n->label);
-            pkt_len = sizeof(asft_pkt) - ASFT_BLOCK_LEN;
-            req_flags.rst = 1;
-            keep_talking = true;
+            if (n->ready) {
+                asft_msg_tx_init(&n->msg_tx, n->download_dir);
+                if (n->msg_tx.msg) {
+                    pkt_len = sizeof(asft_pkt);
+
+                    asft_msg_tx_send(&n->msg_tx, &req_flags.seq, pkt.data);
+                    keep_talking = true;
+                } else {
+                    pkt_len = sizeof(asft_pkt) - ASFT_BLOCK_LEN;
+                }
+                asft_msg_rx_get_ack(&n->msg_rx, &req_flags.ack);
+            } else {
+                asft_debug("Sending reset to '%s'\n", n->label);
+                pkt_len = sizeof(asft_pkt) - ASFT_BLOCK_LEN;
+                req_flags.rst = 1;
+                keep_talking = true;
+            }
+
+            pkt.flags = asft_pkt_flags_encode(&req_flags);
+
+            rv = asft_encrypt_req(n->crypto_ctx, &cpkt, &pkt, pkt_len);
+            if (rv) {
+                asft_error("Node '%s' cannot encrypt packet\n", n->label);
+                return 1;
+            }
         }
 
-        pkt.flags = asft_pkt_flags_encode(&req_flags);
-
-        rv = asft_encrypt_req(n->crypto_ctx, &cpkt, &pkt, pkt_len);
-        if (rv) {
-            asft_error("Node '%s' cannot encrypt packet\n", n->label);
-            return 1;
-        }
 
         asft_debug("Sending request %u bytes\n", pkt_len);
 
-        rv = asft_serial_send((unsigned char*) &cpkt, pkt_len);
+        rv = asft_serial_send((unsigned char*) tx_buf, pkt_len);
         if (rv < 0) {
             asft_error("Cannot send request\n");
             return 1;
@@ -259,44 +277,71 @@ int asft_gateway_loop(void)
 
             asft_debug("Received %u bytes\n", rx_packet_len);
 
-            if (asft_decrypt_resp(n->crypto_ctx, &resp, cresp, rx_packet_len)) {
-                asft_debug("Decryption failed\n");
-                continue;
-            }
-
-            struct asft_pkt_flags resp_flags;
-            asft_pkt_flags_decode(&resp_flags, resp.flags);
-            got_response = true;
-
-            if (resp_flags.err) {
-                asft_debug("Node '%s' reported receive error\n", n->label);
-                error_seen = true;
-            }
-
-            if (resp_flags.rst) {
-                asft_debug("Node '%s' is not ready\n", n->label);
-                asft_msg_tx_cancel(&n->msg_tx);
-                asft_msg_rx_cancel(&n->msg_rx);
-                n->ready = false;
+            if (!n->session_key_established) {
+                asft_debug("Expecting key response for node '%s'\n", n->label);
+                if (rx_packet_len != sizeof(asft_key_pkt) ||
+                    asft_crypto_kex_accept(n->crypto_ctx, (asft_key_pkt *) cresp)) {
+                    asft_debug("Key exchange response rejected\n");
+                    continue;
+                }
+                asft_debug("Session key established with node '%s'\n", n->label);
+                n->session_key_established = true;
+                talk_same_node = true;
+                got_response = true;
                 keep_talking = true;
-            } else if (!n->ready) {
-                asft_debug("Node '%s' is ready\n", n->label);
-                asft_crypto_set_session_timestamp(n->crypto_ctx);
-                asft_msg_tx_cancel(&n->msg_tx);
-                asft_msg_rx_cancel(&n->msg_rx);
-                n->ready = true;
-            } else if (rx_packet_len == (sizeof(asft_pkt) - ASFT_BLOCK_LEN)) {
-                if (process_resp_data(n, &resp, &resp_flags, false))
-                    error_seen = true;
             } else {
-                if (process_resp_data(n, &resp, &resp_flags, true))
+                if (asft_decrypt_resp(n->crypto_ctx, &resp, cresp, rx_packet_len)) {
+                    asft_debug("Decryption failed\n");
+                    continue;
+                }
+
+                struct asft_pkt_flags resp_flags;
+                asft_pkt_flags_decode(&resp_flags, resp.flags);
+                got_response = true;
+
+                if (resp_flags.err) {
+                    asft_debug("Node '%s' reported receive error\n", n->label);
                     error_seen = true;
-                keep_talking = true;
+                }
+
+                if (resp_flags.rst) {
+                    asft_debug("Node '%s' is not ready\n", n->label);
+                    asft_msg_tx_cancel(&n->msg_tx);
+                    asft_msg_rx_cancel(&n->msg_rx);
+                    n->ready = false;
+                    keep_talking = true;
+                } else if (!n->ready) {
+                    asft_debug("Node '%s' is ready\n", n->label);
+                    asft_msg_tx_cancel(&n->msg_tx);
+                    asft_msg_rx_cancel(&n->msg_rx);
+                    n->ready = true;
+                } else if (rx_packet_len == (sizeof(asft_pkt) - ASFT_BLOCK_LEN)) {
+                    if (process_resp_data(n, &resp, &resp_flags, false))
+                        error_seen = true;
+                } else {
+                    if (process_resp_data(n, &resp, &resp_flags, true))
+                        error_seen = true;
+                    keep_talking = true;
+                }
             }
         };
 
-        if (!got_response)
+        if (!got_response) {
             asft_debug("No response\n");
+            n->no_response_count++;
+            if (n->no_response_count > 3) {
+                asft_debug("Node '%s' has not responded for 3 consecutive times, clearing session key\n", n->label);
+                n->session_key_established = false;
+            }
+        } else {
+            n->no_response_count = 0;
+        }
+
+        if (n->session_key_established && asft_crypto_session_exhausted(n->crypto_ctx)) {
+            asft_debug("Packet counter exhausted for node '%s', clearing session key\n", n->label);
+            n->session_key_established = false;
+            keep_talking = true;
+        }
 
         if (error_seen) {
             apply_error_backoff(n);

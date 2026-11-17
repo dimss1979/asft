@@ -5,7 +5,6 @@
 #include "asft.h"
 
 static unsigned int debug = 0;
-static uint64_t timestamp_step = 1;
 
 void asft_error(const char *format, ...)
 {
@@ -60,13 +59,6 @@ void asft_set_debug(unsigned int d)
     debug = d;
 }
 
-void asft_set_timestamp_step(uint64_t step)
-{
-    if (step > 0) {
-        timestamp_step = step;
-    }
-}
-
 uint64_t asft_now()
 {
     struct timespec now;
@@ -74,13 +66,4 @@ uint64_t asft_now()
     clock_gettime(CLOCK_MONOTONIC, &now);
 
     return now.tv_sec * 1000ULL + now.tv_nsec / 1000000ULL;
-}
-
-uint64_t asft_timestamp()
-{
-    struct timespec now;
-
-    clock_gettime(CLOCK_REALTIME, &now);
-
-    return (now.tv_sec * 1000ULL + now.tv_nsec / 1000000ULL) / timestamp_step;
 }

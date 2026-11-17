@@ -55,8 +55,6 @@ int asft_node_init_crypto(char *network_id)
     if (!gw.crypto_ctx)
         return -1;
 
-    asft_crypto_timestamp_init(gw.crypto_ctx);
-
     asft_peer_clear_key(&gw);
 
     return 0;
@@ -129,40 +127,62 @@ int asft_node_loop(void)
 
         asft_debug("Received %u bytes\n", pkt_len);
 
-        rv = asft_decrypt_req(gw.crypto_ctx, &pkt, cpkt, pkt_len);
-        if (rv) {
-            asft_debug("Decryption failed\n");
-            continue;
+        bool is_key_exchange = false;
+
+        if (pkt_len == sizeof(asft_key_pkt)) {
+            rv = asft_crypto_kex_respond(gw.crypto_ctx, (asft_key_pkt *) &cresp, (asft_key_pkt *) cpkt);
+            if (rv < 0) {
+                asft_error("Key exchange failed\n");
+                continue;
+            }
+            if (!rv)
+                is_key_exchange = true;
         }
 
-        struct asft_pkt_flags resp_flags = {0}, req_flags;
-        asft_pkt_flags_decode(&req_flags, pkt.flags);
+        if (!is_key_exchange) {
+            rv = asft_decrypt_req(gw.crypto_ctx, &pkt, cpkt, pkt_len);
+            if (rv) {
+                asft_debug("Decryption failed\n");
+                continue;
+            }
+        }
 
-        if (req_flags.rst) {
-            asft_debug("Reset requested\n");
-            asft_msg_tx_cancel(&gw.msg_tx);
-            asft_msg_rx_cancel(&gw.msg_rx);
-            asft_crypto_set_session_timestamp(gw.crypto_ctx);
-            gw.ready = true;
-            resp_len = sizeof(asft_pkt) - ASFT_BLOCK_LEN;
-        } else if (!gw.ready) {
-            asft_debug("Not ready\n");
-            resp_len = sizeof(asft_pkt) - ASFT_BLOCK_LEN;
-            resp_flags.rst = 1;
-        } else if (pkt_len == sizeof(asft_pkt) - ASFT_BLOCK_LEN) {
-            process_req_data(&pkt, &req_flags, &resp, &resp_len, &resp_flags, false);
+        if (is_key_exchange) {
+            asft_debug("Key exchange request\n");
+            resp_len = sizeof(asft_key_pkt);
         } else {
-            process_req_data(&pkt, &req_flags, &resp, &resp_len, &resp_flags, true);
+            asft_debug("Regular request\n");
+            struct asft_pkt_flags resp_flags = {0}, req_flags;
+
+            asft_pkt_flags_decode(&req_flags, pkt.flags);
+
+            if (req_flags.rst) {
+                asft_debug("Reset requested\n");
+                asft_msg_tx_cancel(&gw.msg_tx);
+                asft_msg_rx_cancel(&gw.msg_rx);
+                gw.ready = true;
+                resp_len = sizeof(asft_pkt) - ASFT_BLOCK_LEN;
+            } else if (!gw.ready) {
+                asft_debug("Not ready\n");
+                resp_len = sizeof(asft_pkt) - ASFT_BLOCK_LEN;
+                resp_flags.rst = 1;
+            } else if (pkt_len == sizeof(asft_pkt) - ASFT_BLOCK_LEN) {
+                process_req_data(&pkt, &req_flags, &resp, &resp_len, &resp_flags, false);
+            } else {
+                process_req_data(&pkt, &req_flags, &resp, &resp_len, &resp_flags, true);
+            }
+
+            if (resp_len) {
+                resp.flags = asft_pkt_flags_encode(&resp_flags);
+
+                if (asft_encrypt_resp(gw.crypto_ctx, &cresp, &resp, resp_len)) {
+                    asft_error("Response encryption failed\n");
+                    return 1;
+                }
+            }
         }
 
         if (resp_len) {
-            resp.flags = asft_pkt_flags_encode(&resp_flags);
-
-            if (asft_encrypt_resp(gw.crypto_ctx, &cresp, &resp, resp_len)) {
-                asft_error("Response encryption failed\n");
-                return 1;
-            }
-
             asft_debug("Sending response %u bytes\n", resp_len);
 
             if (asft_serial_send((unsigned char*) &cresp, resp_len) < 0) {

@@ -12,27 +12,43 @@
  * Per-packet tag and per-message MAC lengths.
  *
  * The packet tag is deliberately short to limit per-packet overhead on
- * severely constrained links; it bounds single-packet forgery and is also
- * used as the ChaCha20 SIV nonce, so packets sharing a timestamp must not
- * produce colliding tags.
+ * severely constrained links; it bounds single-packet forgery.
  *
  * The file header and body MACs are sent once per file, so they are longer
  * and provide the end-to-end integrity guarantee independently of the
  * short per-packet tag.
  */
-#define ASFT_TAG_LEN     5
+#define ASFT_TAG_LEN     6
 #define ASFT_MSG_MAC_LEN 8
-#define ASFT_TS_LEN      sizeof(uint64_t)
-#define ASFT_TS_XMIT    2
-#define ASFT_TS_HIDE    (ASFT_TS_LEN - ASFT_TS_XMIT)
 #define ASFT_BLOCK_LEN  100
 
 typedef struct _asft_pkt {
     uint8_t tag[ASFT_TAG_LEN];
-    uint8_t timestamp[ASFT_TS_XMIT];
+    uint8_t counter; /* obfuscated nonce, see asft_crypto.c */
     uint8_t flags;
     uint8_t data[ASFT_BLOCK_LEN];
 } __attribute__((packed)) asft_pkt;
+
+/*
+ * Key exchange packet, the same length as a full data packet so that it
+ * cannot be told apart by size. Everything after random_nonce is encrypted.
+ * tag is a MAC over random_nonce and the ciphertext (plus the request public
+ * key for the response). Both are keyed from the peer key and random_nonce.
+ */
+#define ASFT_KEY_TAG_LEN    16
+#define ASFT_KEY_NONCE_LEN  12
+#define ASFT_X448_KEY_LEN   56
+#define ASFT_KEY_PKT_PAD \
+    (sizeof(asft_pkt) - ASFT_KEY_TAG_LEN - ASFT_KEY_NONCE_LEN - ASFT_X448_KEY_LEN)
+
+typedef struct _asft_key_pkt {
+    uint8_t tag[ASFT_KEY_TAG_LEN];
+    uint8_t random_nonce[ASFT_KEY_NONCE_LEN];
+    uint8_t X448_pubkey[ASFT_X448_KEY_LEN];
+    uint8_t pad[ASFT_KEY_PKT_PAD];
+} __attribute__((packed)) asft_key_pkt;
+
+_Static_assert(sizeof(asft_key_pkt) == sizeof(asft_pkt), "key packet must match data packet length");
 
 struct asft_pkt_flags {
     uint8_t rst;
@@ -66,9 +82,7 @@ void asft_debug(const char *format, ...);
 void asft_dump(void *buf, size_t len, char *desc);
 void asft_debug_dump(void *buf, size_t len, char *desc);
 void asft_set_debug(unsigned int d);
-void asft_set_timestamp_step(uint64_t step);
 uint64_t asft_now(void);
-uint64_t asft_timestamp(void);
 
 /* serial */
 
@@ -90,7 +104,7 @@ enum asft_msg_dir {
     ASFT_MSG_DIR_COUNT
 };
 
-/* Short fingerprint over all four derived encryption keys, used by -c. */
+/* Short fingerprint over all derived link keys, used by -c. */
 #define ASFT_FINGERPRINT_LEN     8
 #define ASFT_FINGERPRINT_HEX_LEN (ASFT_FINGERPRINT_LEN * 2)
 
@@ -106,9 +120,25 @@ struct asft_crypto_ctx;
 
 struct asft_crypto_ctx *asft_crypto_ctx_init(const char *key_b64, const char *network_id_b64);
 int asft_crypto_fingerprint(struct asft_crypto_ctx *ctx, char *out, size_t out_len);
-void asft_crypto_timestamp_init(struct asft_crypto_ctx *ctx);
 
-void asft_crypto_set_session_timestamp(struct asft_crypto_ctx *ctx);
+/* Gateway: true when the packet counter is used up and a new session key is needed. */
+bool asft_crypto_session_exhausted(struct asft_crypto_ctx *ctx);
+
+/*
+ * Session key exchange (X448). Gateway builds a request, node answers it and
+ * the gateway then accepts the response. Return 0 on success, 1 when the
+ * packet does not authenticate, -1 on internal error (node respond only).
+ */
+
+/* Gateway: start a new exchange, replacing any pending one. */
+int asft_crypto_kex_request(struct asft_crypto_ctx *ctx, asft_key_pkt *req);
+/* Gateway: verify the response to the pending request and set the session key. */
+int asft_crypto_kex_accept(struct asft_crypto_ctx *ctx, const asft_key_pkt *resp);
+/*
+ * Node: verify a request and build the response. The derived session key is
+ * only stored as a candidate; nothing else changes.
+ */
+int asft_crypto_kex_respond(struct asft_crypto_ctx *ctx, asft_key_pkt *resp, const asft_key_pkt *req);
 
 int asft_encrypt_req(
     struct asft_crypto_ctx *ctx,
@@ -219,7 +249,12 @@ struct asft_peer {
 
     uint64_t pause_until;               /* gateway */
     uint32_t backoff_time;              /* gateway */
-    bool ready;
+    uint64_t no_response_count;         /* gateway */
+
+    // Note that these two flags are generally independent of each other
+    // Because file transfer can outlive session key
+    bool ready; // File transfer protocol ready
+    bool session_key_established; // Session key established with this peer
 
     struct asft_msg_tx msg_tx;
     struct asft_msg_rx msg_rx;

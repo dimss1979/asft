@@ -14,7 +14,7 @@ Minimum line requirements are:
 
 * 8 bits (8N1)
 * Half-duplex (full-duplex is also supported)
-* Default frame size is 110 bytes
+* Default frame size is 111 bytes (108-byte long packet plus 3 bytes of framing)
 
 Examples:
 
@@ -179,29 +179,6 @@ To avoid sending a half-written file, choose one of these ways, best first:
 * Symlinks are not transferred.
 * Multiple files are sent in ascending `ctime` order: the file moved in first is sent first.
 
-## Gateway operation
-
-Gateway is the initiator of all packet exchange.
-It polls its nodes in a round-robin manner.
-
-There are two packet types:
-
-1. Long packets carrying file fragments and flags
-2. Short packets carrying only flags
-
-## Node operation
-
-The node only responds to gateway requests.
-It never initiates communication.
-
-## File transfer
-
-`asft` is based on a sequential, bidirectional file transfer protocol.
-
-The context of file transfer is preserved across connectivity loss.
-File transfer will resume when connectivity is restored as long as you keep the `asft` process running at both ends.
-This is very helpful with slow communication channels.
-
 ## Configuration options
 
 ### debug
@@ -275,21 +252,6 @@ When a node does not respond or there is no data to transfer, the gateway will p
 - When a response is received and there is data to transfer, the backoff is reset to zero
 - When a "error while processing data packet" condition occurs, either on the gateway or on the node, the backoff is set to half of `backoff_time_max`. The node signals its own error to the gateway with the `err` flag in its response
 
-### timestamp_step
-
-Timestamp step in milliseconds (default: 1).
-
-This parameter controls the granularity of timestamps used as nonces for packet encryption.
-Increasing this value is useful in two cases:
-
-- When the communication channel is extra slow
-- When you want to allow a larger clock offset
-
-By default, maximum permissible sum of data packet transmission time and clock offset is ~32.8 seconds.
-
-Timestamp step must be smaller than data packet transmission time.
-Otherwise, some packets will fail to decrypt.
-
 ### serial_packet_loss
 
 Packet loss probability in serial frame receive path (default: 0.0).
@@ -334,6 +296,83 @@ Label is used for:
 Directory names follow the pattern: `to_label` and `from_label`.
 Both directories must be created in advance in the working directory of `asft`.
 
+## Protocol
+
+### Roles
+
+The gateway is the initiator of all packet exchange.
+It polls its nodes in a round-robin manner.
+
+The node only responds to gateway requests.
+It never initiates communication.
+
+### File transfer
+
+`asft` is based on a sequential, bidirectional file transfer protocol.
+
+The context of file transfer is preserved across connectivity loss.
+File transfer will resume when connectivity is restored as long as you keep the `asft` process running at both ends.
+This is very helpful with slow communication channels.
+
+### Packets
+
+Only two packet lengths appear on the line:
+
+| Packet | Length | Carries |
+|--------|--------|---------|
+| Long   | 108 bytes | file fragment (100 bytes) and flags |
+| Short  | 8 bytes   | flags only |
+
+Data packets have this layout:
+
+| Field   | Size | Notes |
+|---------|------|-------|
+| tag     | 6 bytes | authentication tag |
+| counter | 1 byte  | obfuscated nonce, see Packet protection |
+| flags   | 1 byte  | |
+| data    | 100 bytes | long packets only |
+
+Key exchange packets (see below) are also 108 bytes long, so they look like long data packets.
+Each packet is sent in a 3-byte frame (a COBS byte and two delimiters), so frames are 111 and 11 bytes long.
+
+### Session key exchange
+
+Packets are protected with a session key, which the gateway and the node establish by an X448 key exchange:
+
+1. The gateway sends an ephemeral X448 public key and a random nonce.
+2. The node answers with its own ephemeral public key and nonce.
+3. Both sides derive the session key from the X448 shared secret, both public keys and both nonces.
+
+Both messages are encrypted and authenticated with keys derived from the link key, so only a holder of the link key can take part.
+The response is bound to the request it answers.
+The node does not trust a new session key until the first data packet protected with it arrives.
+
+The gateway starts an exchange whenever it has no session key for a node, and right after a successful exchange it sends that node its first data packet.
+
+### Packet protection
+
+Data packets use encrypt-then-MAC. Flags and data are encrypted with ChaCha20, and the tag is a truncated BLAKE2s MAC over the counter and the ciphertext.
+Encryption and MAC keys are derived from the session key, separately for each direction.
+
+The counter is the nonce. It starts at 1 in each session and grows with every request, including retransmissions.
+The node accepts only counters higher than the last one it accepted, which prevents replay.
+After 255 packets the gateway discards the session key and runs a new key exchange.
+
+The counter is not sent as is, because that would show how many packets a session has used and when it is renewed.
+It is sent through a keyed permutation of the 256 byte values, derived from the session key, with a separate permutation for each direction.
+On the line the counters look random and never repeat within a session, and a response does not echo the byte of its request.
+The receiver verifies the tag first and then applies the inverse permutation.
+This hides traffic patterns only. Security rests on the tag and the keys.
+
+The exact construction is documented in `asft_crypto.c`.
+
+### File transfer and session keys
+
+File transfer outlives session keys.
+A file transfer is not tied to the session key it started under and continues across key changes.
+A session key covers only 255 packets and a file takes many packets, so several key exchanges normally happen during a single file transfer.
+They are invisible to the file layer: the transfer is not restarted, and file authentication does not depend on the session key.
+
 ## Security
 
 Each node is addressed by its key only.
@@ -344,20 +383,12 @@ Each peer key is the input keying material for HKDF, and `network_id` is the
 HKDF salt. It is not a secret, but it must be identical on all peers and unique
 to the network.
 
-Time must be kept in sync between the gateway and all nodes by whatever means (for example NTP, chrony, GPS, or a manually set and well-maintained RTC). `asft` does not synchronize clocks itself. Clocks must agree within a few seconds, otherwise packets cannot be decrypted.
-
-Each transmitted packet is encrypted and authenticated.
-Each file is additionally authenticated. File authentication keys are separate for each direction, so a file cannot be reflected back to its sender.
-Basic encryption, authentication, and replay protection are implemented.
-Perfect Forward Secrecy (PFS) and Post-Compromise Security (PCS) are not currently implemented.
-Only symmetric encryption is used.
-
-### Packet encryption
-
-Packets use chaSIV, a committing, misuse-resistant AE transform built from a hash function, a PRF, and a stream cipher (ChaCha20). It is defined in Chen and Karadžić, [*Committing Authenticated Encryption: Generic Transforms with Hash Functions*](https://eprint.iacr.org/2025/320) (EUROCRYPT 2025), Section 4.2. The exact instantiation is documented in `asft_crypto.c`.
+* Each transmitted packet is encrypted and authenticated.
+* Each file is additionally authenticated. File authentication keys are separate for each direction, so a file cannot be reflected back to its sender.
+* Replay of packets is detected. Clocks do not need to be synchronized.
+* Session keys are ephemeral, so compromise of a session key does not reveal other sessions.
 
 ### Known trade-offs
 
-* **Short packet tag.** Each packet carries a 40-bit authentication tag, chosen to keep per-packet overhead low on slow links. An attacker who can inject packets has about a 2^-40 chance per attempt of forging one. The same tag also serves as the encryption nonce. The file header and body MACs are longer and are the end-to-end integrity check.
-* **Replay protection depends on the clock.** Each side starts its replay high-water mark from the system clock when `asft` starts, and does not store it. If a node's clock is set backwards across a restart, previously captured requests may be accepted again. Keep clocks monotonic, for example with a working RTC or NTP, and do not restore an old clock value after a restart.
+* **Short packet tag.** Each packet carries a 48-bit authentication tag, chosen to keep per-packet overhead low on slow links. An attacker who can inject packets has about a 2^-48 chance per attempt of forging one. The file header and body MACs are longer and are the end-to-end integrity check.
 

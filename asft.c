@@ -202,13 +202,6 @@ static int read_config_file(char *filename)
                 goto error;
             }
             asft_gateway_set_backoff_time_max(atoi(backoff_time_max));
-        } else if (!strcmp(token, "timestamp_step")) {
-            char *timestamp_step = strtok(NULL, delimiters);
-            if (!timestamp_step) {
-                asft_error("No timestamp step specified on line %i\n", line_number);
-                goto error;
-            }
-            asft_set_timestamp_step(atoll(timestamp_step));
         } else if (!strcmp(token, "serial_packet_loss")) {
             char *packet_loss = strtok(NULL, delimiters);
             if (!packet_loss) {
