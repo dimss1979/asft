@@ -393,3 +393,9 @@ to the network.
 
 * **Short packet tag.** Each packet carries a 48-bit authentication tag, chosen to keep per-packet overhead low on slow links. An attacker who can inject packets has about a 2^-48 chance per attempt of forging one. The file header and body MACs are longer and are the end-to-end integrity check.
 
+## License
+
+This project is released under the ISC License. See [LICENSE](LICENSE) for the full text.
+
+Copyright (c) 2026 dimss1979 <dimss1979@yandex.ru>
+
