@@ -60,6 +60,14 @@ int asft_node_init_crypto(char *network_id)
     return 0;
 }
 
+void asft_node_deinit_crypto(void)
+{
+    asft_crypto_ctx_free(gw.crypto_ctx);
+    gw.crypto_ctx = NULL;
+    gw.msg_tx.crypto_ctx = NULL;
+    gw.msg_rx.crypto_ctx = NULL;
+}
+
 int asft_node_print_peers(void)
 {
     char fingerprint[ASFT_FINGERPRINT_HEX_LEN + 1];

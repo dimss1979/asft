@@ -119,6 +119,7 @@ int asft_crypto_key_valid(const char *b64);
 struct asft_crypto_ctx;
 
 struct asft_crypto_ctx *asft_crypto_ctx_init(const char *key_b64, const char *network_id_b64);
+void asft_crypto_ctx_free(struct asft_crypto_ctx *ctx);
 int asft_crypto_fingerprint(struct asft_crypto_ctx *ctx, char *out, size_t out_len);
 
 /* Gateway: true when the packet counter is used up and a new session key is needed. */
@@ -270,6 +271,7 @@ void asft_peer_clear_key(struct asft_peer *peer);
 int asft_node_loop(void);
 int asft_node_set_gateway(char *label, char *key);
 int asft_node_init_crypto(char *network_id);
+void asft_node_deinit_crypto(void);
 int asft_node_print_peers(void);
 
 /* gateway */
@@ -277,6 +279,7 @@ int asft_node_print_peers(void);
 int asft_gateway_loop(void);
 int asft_gateway_add_node(char *label, char *key);
 int asft_gateway_init_crypto(char *network_id);
+void asft_gateway_deinit_crypto(void);
 int asft_gateway_print_peers(void);
 void asft_gateway_set_retry_timeout(int new_timeout);
 void asft_gateway_set_backoff_time_max(uint32_t new_backoff_time_max);

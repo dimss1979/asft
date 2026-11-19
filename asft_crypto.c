@@ -179,6 +179,8 @@ static int blake2s_mac(
 )
 {
     int rv = -1;
+    size_t output_len = 0;
+    unsigned char output[CHACHA_KEY_SIZE] = {0};
 
     EVP_MAC *mac = NULL;
     EVP_MAC_CTX *ctx = NULL;
@@ -215,8 +217,6 @@ static int blake2s_mac(
         }
     }
 
-    size_t output_len = 0;
-    unsigned char output[CHACHA_KEY_SIZE];
     if (EVP_MAC_final(ctx, output, &output_len, CHACHA_KEY_SIZE) != 1) {
         asft_error("Cannot finalize MAC\n");
         goto error;
@@ -226,6 +226,8 @@ static int blake2s_mac(
     rv = 0;
 
 error:
+
+    OPENSSL_cleanse(output, sizeof(output));
 
     if (ctx)
         EVP_MAC_CTX_free(ctx);
@@ -486,10 +488,10 @@ error:
 /* Make key the session key: derive the packet keys and restart the counter. */
 static int session_set(struct asft_crypto_ctx *ctx, const uint8_t key[SESSION_KEY_SIZE])
 {
-    uint8_t enc[ASFT_MSG_DIR_COUNT][CHACHA_KEY_SIZE];
-    uint8_t mac[ASFT_MSG_DIR_COUNT][CHACHA_KEY_SIZE];
-    uint8_t fwd[ASFT_MSG_DIR_COUNT][256];
-    uint8_t inv[ASFT_MSG_DIR_COUNT][256];
+    uint8_t enc[ASFT_MSG_DIR_COUNT][CHACHA_KEY_SIZE] = {0};
+    uint8_t mac[ASFT_MSG_DIR_COUNT][CHACHA_KEY_SIZE] = {0};
+    uint8_t fwd[ASFT_MSG_DIR_COUNT][256] = {0};
+    uint8_t inv[ASFT_MSG_DIR_COUNT][256] = {0};
     int rv = 1;
 
     for (int dir = 0; dir < ASFT_MSG_DIR_COUNT; dir++) {
@@ -618,7 +620,7 @@ int asft_decrypt_req(
     /* Otherwise the packet may be the first one under a candidate key, newest first */
     for (size_t k = 0; !verified && k < ctx->candidate_cnt; k++) {
         size_t i = (ctx->candidate_idx + KEX_CANDIDATES - 1 - k) % KEX_CANDIDATES;
-        uint8_t mac_key[CHACHA_KEY_SIZE];
+        uint8_t mac_key[CHACHA_KEY_SIZE] = {0};
         int rv = derive_pkt_key(mac_key, ctx->candidate_key[i], pkt_mac_info[ASFT_MSG_DIR_REQUEST]);
 
         if (!rv)
@@ -775,17 +777,23 @@ static int kex_packet_keys(
     enum asft_msg_dir dir,
     const uint8_t nonce[ASFT_KEY_NONCE_LEN]
 ) {
-    uint8_t keys[2 * CHACHA_KEY_SIZE];
+    uint8_t keys[2 * CHACHA_KEY_SIZE] = {0};
+    int rv = 1;
 
     if (HKDF(keys, sizeof(keys), ctx->kex_key[dir], CHACHA_KEY_SIZE,
              (void *) nonce, ASFT_KEY_NONCE_LEN, "asft-key-exchange-packet"))
-        return 1;
+        goto error;
 
     memcpy(enc_key, keys, CHACHA_KEY_SIZE);
     memcpy(mac_key, keys + CHACHA_KEY_SIZE, CHACHA_KEY_SIZE);
+
+    rv = 0;
+
+error:
+
     OPENSSL_cleanse(keys, sizeof(keys));
 
-    return 0;
+    return rv;
 }
 
 static int kex_seal(
@@ -797,7 +805,7 @@ static int kex_seal(
     size_t ad_len
 ) {
     int rv = 1;
-    uint8_t enc_key[CHACHA_KEY_SIZE], mac_key[CHACHA_KEY_SIZE];
+    uint8_t enc_key[CHACHA_KEY_SIZE] = {0}, mac_key[CHACHA_KEY_SIZE] = {0};
     uint8_t iv[CHACHA_CTR_SIZE] = {0};
     uint8_t plain[KEX_ENC_LEN] = {0};
 
@@ -835,9 +843,9 @@ static int kex_open(
     size_t ad_len
 ) {
     int rv = -1;
-    uint8_t enc_key[CHACHA_KEY_SIZE], mac_key[CHACHA_KEY_SIZE];
+    uint8_t enc_key[CHACHA_KEY_SIZE] = {0}, mac_key[CHACHA_KEY_SIZE] = {0};
     uint8_t iv[CHACHA_CTR_SIZE] = {0};
-    uint8_t tag[ASFT_KEY_TAG_LEN];
+    uint8_t tag[ASFT_KEY_TAG_LEN] = {0};
 
     if (kex_packet_keys(enc_key, mac_key, ctx, dir, pkt->random_nonce))
         goto error;
@@ -860,6 +868,7 @@ error:
 
     OPENSSL_cleanse(enc_key, sizeof(enc_key));
     OPENSSL_cleanse(mac_key, sizeof(mac_key));
+    OPENSSL_cleanse(tag, sizeof(tag));
 
     return rv;
 }
@@ -893,7 +902,7 @@ static int kex_derive_session_key(
     int rv = 1;
     EVP_PKEY *peer = NULL;
     EVP_PKEY_CTX *pctx = NULL;
-    uint8_t shared[ASFT_X448_KEY_LEN];
+    uint8_t shared[ASFT_X448_KEY_LEN] = {0};
     size_t shared_len = sizeof(shared);
     uint8_t transcript[2 * (ASFT_KEY_NONCE_LEN + ASFT_X448_KEY_LEN)];
     uint8_t *t = transcript;
@@ -938,15 +947,18 @@ error:
 /* Log a hash of the session key, so that both ends can be compared without exposing the key */
 static void debug_dump_key_hash(const uint8_t key[SESSION_KEY_SIZE], char *desc)
 {
-    uint8_t hash[32];
-    unsigned int hash_len = sizeof(hash);
+    uint8_t hash[32] = {0};
 
     if (EVP_Q_digest(NULL, "BLAKE2S-256", NULL, key, SESSION_KEY_SIZE, hash, NULL) != 1) {
         asft_error("Cannot hash session key\n");
-        return;
+        goto error;
     }
 
-    asft_debug_dump(hash, hash_len, desc);
+    asft_debug_dump(hash, sizeof(hash), desc);
+
+error:
+
+    OPENSSL_cleanse(hash, sizeof(hash));
 }
 
 static void kex_clear_pending(struct asft_crypto_ctx *ctx)
@@ -954,6 +966,17 @@ static void kex_clear_pending(struct asft_crypto_ctx *ctx)
     if (ctx->kex_pkey)
         EVP_PKEY_free(ctx->kex_pkey);
     ctx->kex_pkey = NULL;
+}
+
+void asft_crypto_ctx_free(struct asft_crypto_ctx *ctx)
+{
+    if (!ctx)
+        return;
+
+    /* Free the pending X448 private key, then wipe all derived keys */
+    kex_clear_pending(ctx);
+    OPENSSL_cleanse(ctx, sizeof(*ctx));
+    free(ctx);
 }
 
 int asft_crypto_kex_request(struct asft_crypto_ctx *ctx, asft_key_pkt *req)
@@ -984,48 +1007,51 @@ int asft_crypto_kex_request(struct asft_crypto_ctx *ctx, asft_key_pkt *req)
 
 int asft_crypto_kex_accept(struct asft_crypto_ctx *ctx, const asft_key_pkt *resp)
 {
-    uint8_t resp_pub[ASFT_X448_KEY_LEN];
-    uint8_t key[SESSION_KEY_SIZE];
-    int rv;
+    uint8_t resp_pub[ASFT_X448_KEY_LEN] = {0};
+    uint8_t key[SESSION_KEY_SIZE] = {0};
+    int rv = 1;
 
     if (!ctx->kex_pkey)
-        return 1;
+        goto error;
 
     /* The response is bound to our request through its public key */
-    rv = kex_open(ctx, ASFT_MSG_DIR_RESPONSE, resp_pub, resp, ctx->kex_pub, sizeof(ctx->kex_pub));
-    if (rv)
-        return 1;
+    if (kex_open(ctx, ASFT_MSG_DIR_RESPONSE, resp_pub, resp, ctx->kex_pub, sizeof(ctx->kex_pub)))
+        goto error;
 
     if (kex_derive_session_key(key, ctx->kex_pkey, resp_pub,
                                ctx->kex_nonce, ctx->kex_pub,
                                resp->random_nonce, resp_pub)) {
         asft_error("Cannot derive session key\n");
-        return 1;
+        goto error;
     }
 
     debug_dump_key_hash(key, "Session key hash (gateway)");
-    rv = session_set(ctx, key);
-    OPENSSL_cleanse(key, sizeof(key));
-    if (rv) {
+    if (session_set(ctx, key)) {
         asft_error("Cannot set session key\n");
-        return 1;
+        goto error;
     }
-    kex_clear_pending(ctx);
 
-    return 0;
+    kex_clear_pending(ctx);
+    rv = 0;
+
+error:
+
+    OPENSSL_cleanse(key, sizeof(key));
+
+    return rv;
 }
 
 int asft_crypto_kex_respond(struct asft_crypto_ctx *ctx, asft_key_pkt *resp, const asft_key_pkt *req)
 {
-    uint8_t req_pub[ASFT_X448_KEY_LEN];
-    uint8_t pub[ASFT_X448_KEY_LEN];
-    uint8_t key[SESSION_KEY_SIZE];
+    uint8_t req_pub[ASFT_X448_KEY_LEN] = {0};
+    uint8_t pub[ASFT_X448_KEY_LEN] = {0};
+    uint8_t key[SESSION_KEY_SIZE] = {0};
     EVP_PKEY *pkey = NULL;
     int rv;
 
     rv = kex_open(ctx, ASFT_MSG_DIR_REQUEST, req_pub, req, NULL, 0);
     if (rv)
-        return rv;
+        goto error;
 
     rv = -1;
 

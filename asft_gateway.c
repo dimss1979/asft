@@ -127,7 +127,7 @@ int asft_gateway_init_crypto(char *network_id)
     while (n) {
         n->crypto_ctx = asft_crypto_ctx_init(n->key, network_id);
         if (!n->crypto_ctx)
-            return -1;
+            goto error;
 
         asft_peer_clear_key(n);
 
@@ -135,6 +135,26 @@ int asft_gateway_init_crypto(char *network_id)
     }
 
     return 0;
+
+error:
+
+    asft_gateway_deinit_crypto();
+
+    return -1;
+}
+
+void asft_gateway_deinit_crypto(void)
+{
+    struct asft_peer *n = peer_first;
+
+    while (n) {
+        asft_crypto_ctx_free(n->crypto_ctx);
+        n->crypto_ctx = NULL;
+        n->msg_tx.crypto_ctx = NULL;
+        n->msg_rx.crypto_ctx = NULL;
+
+        n = n->next;
+    }
 }
 
 int asft_gateway_print_peers(void)

@@ -358,21 +358,21 @@ int main(int argc, char **argv)
         case OM_GATEWAY:
             if (asft_gateway_init_crypto(network_id)) {
                 asft_error("Key derivation failed\n");
-                free(network_id);
-                return 1;
+                rv = 1;
+                goto out;
             }
             break;
         case OM_NODE:
             if (asft_node_init_crypto(network_id)) {
                 asft_error("Key derivation failed\n");
-                free(network_id);
-                return 1;
+                rv = 1;
+                goto out;
             }
             break;
         default:
             asft_error("Operation mode not specified\n");
-            free(network_id);
-            return 1;
+            rv = 1;
+            goto out;
     }
 
     if (verify_only) {
@@ -387,8 +387,7 @@ int main(int argc, char **argv)
                 break;
         }
 
-        free(network_id);
-        return !!rv;
+        goto out;
     }
 
     switch (op_mode) {
@@ -401,6 +400,13 @@ int main(int argc, char **argv)
         default:
             break;
     }
+
+out:
+
+    if (op_mode == OM_GATEWAY)
+        asft_gateway_deinit_crypto();
+    else if (op_mode == OM_NODE)
+        asft_node_deinit_crypto();
 
     free(network_id);
     return !!rv;
