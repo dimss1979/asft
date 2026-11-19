@@ -1,5 +1,7 @@
 asft
 asft_keygen
+*.o
+*.d
 
 # Local configuration files (may contain real keys)
 *.conf

@@ -36,11 +36,12 @@ Only readable regular files are sent. Symlinks are ignored.
 ## Build
 
 ```
-./build.sh
+make
 ```
 
-Adjust build script as needed.
-OpenSSL 3.x is required.
+`make clean` removes the binary and object files.
+`CC`, `CFLAGS`, `LDFLAGS` and `LDLIBS` can be overridden on the command line.
+OpenSSL 3.x development headers are required.
 
 ## Command-line options
 
