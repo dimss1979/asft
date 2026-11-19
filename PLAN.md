@@ -16,20 +16,11 @@ These are small, targeted changes that remove real field failures.
 
 ### 1.1 Filenames longer than 79 bytes are broken
 
-`asft_file.c` (first-block branch of `asft_msg_rx_receive`) copies and
-validates `hdr->filename_len` bytes as soon as the first packet arrives. The
-first packet carries only 100 bytes: a 21-byte `struct msg_hdr` plus 79 bytes
-of payload. If the filename is longer, the remaining bytes are uninitialized
-heap, so `filename_is_safe()` sees garbage and rejects a legitimate transfer
-(or, rarely, accepts a garbage name).
-
-Fix options:
-
-* Define `ASFT_FILENAME_MAX = ASFT_BLOCK_LEN - sizeof(struct msg_hdr)` (79)
-  and enforce it in both the sender scan and the receiver.
-* Or defer the filename check until the message is complete. The check is
-  already repeated at completion, so the early `memcpy`/validation can simply
-  be removed; header field validation and the length bounds stay.
+**Done.** `asft_msg_rx_receive` no longer reads the filename from the first
+packet (which carries only 79 payload bytes). The first-block branch verifies
+the header MAC and length bounds only; the filename is copied and validated
+once, after the whole message is received and the file MAC passes. Names up
+to 255 bytes are supported.
 
 ### 1.2 A serial error kills the process
 
