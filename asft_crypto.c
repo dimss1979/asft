@@ -671,12 +671,16 @@ int asft_decrypt_resp(
     asft_pkt *cpkt,
     size_t cpkt_len
 ) {
-    /* Only a response to the last request is acceptable */
-    if (!ctx->session_valid || cpkt_len <= PKT_BODY_OFFSET ||
-        cpkt->counter != ctx->ctr_fwd[ASFT_MSG_DIR_RESPONSE][ctx->counter])
+    if (!ctx->session_valid || cpkt_len <= PKT_BODY_OFFSET)
         return 1;
 
+    /* Verify before comparing the counter, so nothing about the session's
+     * counter permutation is exposed to unauthenticated packets. */
     if (pkt_verify(ctx->pkt_mac_key[ASFT_MSG_DIR_RESPONSE], cpkt, cpkt_len))
+        return 1;
+
+    /* Only a response to the last request is acceptable */
+    if (cpkt->counter != ctx->ctr_fwd[ASFT_MSG_DIR_RESPONSE][ctx->counter])
         return 1;
 
     return pkt_decrypt(ctx, ASFT_MSG_DIR_RESPONSE, pkt, cpkt, cpkt_len, ctx->counter);
