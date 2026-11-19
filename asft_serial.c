@@ -1,12 +1,10 @@
-#include <stdio.h>
 #include <termios.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
-#include <sys/file.h>
 #include <stdlib.h>
 #include <stdbool.h>
-#include <time.h>
 
 #include "asft.h"
 

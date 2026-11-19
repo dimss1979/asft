@@ -5,11 +5,8 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
-#include <endian.h>
-#include <sys/random.h>
 #include <stdbool.h>
 #include <stdlib.h>
-#include <time.h>
 
 #include "asft.h"
 

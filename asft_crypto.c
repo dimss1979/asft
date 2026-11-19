@@ -1,17 +1,12 @@
 #define _GNU_SOURCE
 
 #include <stddef.h>
-#include <errno.h>
 #include <stdlib.h>
-#include <stdio.h>
 #include <string.h>
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
 #include <openssl/core_names.h>
-#include <openssl/hmac.h>
 #include <openssl/rand.h>
-#include <unistd.h>
-#include <assert.h>
 #include <stdbool.h>
 
 #include "asft.h"
@@ -317,7 +312,8 @@ struct asft_crypto_ctx *asft_crypto_ctx_init(const char *key_b64, const char *ne
     struct asft_crypto_ctx *ctx;
 
     ctx = malloc(sizeof(*ctx));
-    assert(ctx);
+    if (!ctx)
+        return NULL;
     memset(ctx, 0, sizeof(*ctx));
 
     /* peer key is the input keying material, network_id is the HKDF salt */

@@ -3,11 +3,7 @@
 #endif /*_GNU_SOURCE*/
 
 #include <stdio.h>
-#include <string.h>
-#include <endian.h>
-#include <stdlib.h>
 #include <stdbool.h>
-#include <time.h>
 
 #include "asft.h"
 
