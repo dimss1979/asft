@@ -26,6 +26,29 @@
 #define COUNTER_MAX      255
 
 #define SESSION_KEY_SIZE 32
+
+/*
+ * Number of session keys the node keeps as candidates until an authenticated
+ * data packet proves which one the gateway is using (see candidate_key and
+ * asft_decrypt_req()). A replayed key exchange request makes the node answer
+ * with a fresh key pair and push another candidate into this ring, so enough
+ * replays could evict the real key before the gateway's first data packet.
+ *
+ * Ten is sufficient for the intended channel: the candidate only has to
+ * survive from the node's response to that first data packet, i.e. one
+ * turnaround plus one frame. On a half-duplex serial link an attacker sharing
+ * the medium cannot inject while either endpoint is transmitting without
+ * corrupting the frame, so only one or two packets fit in that window, far
+ * fewer than needed to overwrite ten candidates. At 1200 baud a full frame
+ * already takes about 720 ms.
+ *
+ * Revisit this bound if the deployment uses a buffered/high-latency modem,
+ * gives an attacker a high-speed local path to the node, or allows an active
+ * jammer to stretch the window across the gateway's retries. The fix in those
+ * cases is a small replay cache of request xnonces (or a rate limit), not a
+ * larger ring. Even if candidates are churned, no session key is disclosed:
+ * each response uses a fresh X448 key pair.
+ */
 #define KEX_CANDIDATES   10
 
 struct asft_crypto_ctx {
