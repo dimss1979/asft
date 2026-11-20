@@ -30,23 +30,21 @@ typedef struct _asft_pkt {
 
 /*
  * Key exchange packet, the same length as a full data packet so that it
- * cannot be told apart by size. Everything after random_nonce is encrypted.
- * tag is a MAC over random_nonce and the ciphertext (plus the request public
- * key for the response). Both are keyed from the peer key and random_nonce.
+ * cannot be told apart by size. Everything after xnonce is encrypted.
+ * tag is a MAC over xnonce and the ciphertext (plus the request public key
+ * for the response). The 128-bit xnonce and the per-direction key exchange
+ * key are expanded with HKDF into the ChaCha20 nonce, ChaCha20 subkey, and
+ * MAC key.
  */
 #define ASFT_KEY_TAG_LEN    16
-/*
- * ChaCha20 uses a 128-bit IV made of a 64-bit block counter followed by a
- * 64-bit nonce, so the key exchange nonce is 8 bytes.
- */
-#define ASFT_KEY_NONCE_LEN  8
+#define ASFT_KEY_XNONCE_LEN 16
 #define ASFT_X448_KEY_LEN   56
 #define ASFT_KEY_PKT_PAD \
-    (sizeof(asft_pkt) - ASFT_KEY_TAG_LEN - ASFT_KEY_NONCE_LEN - ASFT_X448_KEY_LEN)
+    (sizeof(asft_pkt) - ASFT_KEY_TAG_LEN - ASFT_KEY_XNONCE_LEN - ASFT_X448_KEY_LEN)
 
 typedef struct _asft_key_pkt {
     uint8_t tag[ASFT_KEY_TAG_LEN];
-    uint8_t random_nonce[ASFT_KEY_NONCE_LEN];
+    uint8_t xnonce[ASFT_KEY_XNONCE_LEN];
     uint8_t X448_pubkey[ASFT_X448_KEY_LEN];
     uint8_t pad[ASFT_KEY_PKT_PAD];
 } __attribute__((packed)) asft_key_pkt;

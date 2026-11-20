@@ -25,8 +25,6 @@
 /* The packet counter is the only nonce byte (inside the ChaCha20 64-bit nonce) */
 #define COUNTER_MAX      255
 
-_Static_assert(ASFT_KEY_NONCE_LEN == CHACHA_NONCE_SIZE, "key exchange nonce must fit the ChaCha20 nonce");
-
 #define SESSION_KEY_SIZE 32
 #define KEX_CANDIDATES   10
 
@@ -60,7 +58,7 @@ struct asft_crypto_ctx {
     /* Gateway: key exchange request waiting for its response */
     EVP_PKEY *kex_pkey;
     uint8_t kex_pub[ASFT_X448_KEY_LEN];
-    uint8_t kex_nonce[ASFT_KEY_NONCE_LEN];
+    uint8_t kex_xnonce[ASFT_KEY_XNONCE_LEN];
 };
 
 static const char *const msg_key_info[ASFT_MSG_DIR_COUNT] = {
@@ -142,13 +140,14 @@ error:
 /*
  * Build a ChaCha20 IV with the packet counter in the nonce area. The 64-bit
  * block counter stays zero and OpenSSL advances it for every 64-byte block.
+ * The counter goes into the rightmost byte of the 128-bit IV.
  */
 static void chacha20_iv_counter(unsigned char iv[CHACHA_IV_SIZE], uint8_t counter)
 {
-    iv[CHACHA_NONCE_OFFSET] = counter;
+    iv[CHACHA_IV_SIZE - 1] = counter;
 }
 
-/* Build a ChaCha20 IV from an 8-byte random nonce. */
+/* Build a ChaCha20 IV from an 8-byte nonce. */
 static void chacha20_iv_nonce(unsigned char iv[CHACHA_IV_SIZE], const uint8_t nonce[CHACHA_NONCE_SIZE])
 {
     memcpy(iv + CHACHA_NONCE_OFFSET, nonce, CHACHA_NONCE_SIZE);
@@ -553,7 +552,7 @@ bool asft_crypto_session_exhausted(struct asft_crypto_ctx *ctx)
  * Wire layout is tag | wire counter | flags | data, where the wire counter is
  * the counter passed through a keyed permutation (see derive_ctr_perm), with
  * a different permutation for each direction. flags and data are encrypted
- * with ChaCha20 (nonce = real counter, in the 64-bit nonce area of the IV;
+ * with ChaCha20 (nonce = real counter, in the rightmost byte of the IV;
  * the 64-bit block counter stays zero), then the tag is the BLAKE2s-MAC over
  * counter and the ciphertext, truncated to ASFT_TAG_LEN. Keys are per session
  * and per direction. A response reuses the counter of the request it answers.
@@ -783,36 +782,38 @@ int asft_verify_msg_hdr(
 /*
  * Session key exchange.
  *
- * Both packets carry a fresh 8-byte random nonce and an ephemeral X448 public
- * key (the rest of the packet is zero padding). They are protected with
- * encrypt-then-MAC: ChaCha20 and BLAKE2s-MAC keys come from HKDF over the
- * per-direction key exchange key (derived from the peer key) salted with the
- * packet nonce, and ChaCha20 uses the same nonce as its 64-bit nonce, so only
- * a holder of the peer key can build or read them. The response MAC also
- * covers the request public key, binding it to the request.
+ * Both packets carry a fresh 128-bit random xnonce and an ephemeral X448
+ * public key (the rest of the packet is zero padding). They are protected
+ * with encrypt-then-MAC: HKDF over the per-direction key exchange key
+ * (derived from the peer key) salted with the xnonce yields the 64-bit
+ * ChaCha20 nonce, the 256-bit ChaCha20 subkey, and the BLAKE2s-MAC key, so
+ * only a holder of the peer key can build or read them. The response MAC
+ * also covers the request public key, binding it to the request.
  *
  * The session key is HKDF over the X448 shared secret, salted with both
- * nonces and public keys.
+ * xnonces and public keys.
  */
 
 #define KEX_ENC_LEN (ASFT_X448_KEY_LEN + ASFT_KEY_PKT_PAD)
 
 static int kex_packet_keys(
-    uint8_t enc_key[CHACHA_KEY_SIZE],
+    uint8_t nonce[CHACHA_NONCE_SIZE],
+    uint8_t subkey[CHACHA_KEY_SIZE],
     uint8_t mac_key[CHACHA_KEY_SIZE],
     struct asft_crypto_ctx *ctx,
     enum asft_msg_dir dir,
-    const uint8_t nonce[ASFT_KEY_NONCE_LEN]
+    const uint8_t xnonce[ASFT_KEY_XNONCE_LEN]
 ) {
-    uint8_t keys[2 * CHACHA_KEY_SIZE] = {0};
+    uint8_t keys[CHACHA_NONCE_SIZE + 2 * CHACHA_KEY_SIZE] = {0};
     int rv = 1;
 
     if (HKDF(keys, sizeof(keys), ctx->kex_key[dir], CHACHA_KEY_SIZE,
-             (void *) nonce, ASFT_KEY_NONCE_LEN, "asft-key-exchange-packet"))
+             (void *) xnonce, ASFT_KEY_XNONCE_LEN, "asft-key-exchange-packet"))
         goto error;
 
-    memcpy(enc_key, keys, CHACHA_KEY_SIZE);
-    memcpy(mac_key, keys + CHACHA_KEY_SIZE, CHACHA_KEY_SIZE);
+    memcpy(nonce, keys, CHACHA_NONCE_SIZE);
+    memcpy(subkey, keys + CHACHA_NONCE_SIZE, CHACHA_KEY_SIZE);
+    memcpy(mac_key, keys + CHACHA_NONCE_SIZE + CHACHA_KEY_SIZE, CHACHA_KEY_SIZE);
 
     rv = 0;
 
@@ -832,21 +833,22 @@ static int kex_seal(
     size_t ad_len
 ) {
     int rv = 1;
-    uint8_t enc_key[CHACHA_KEY_SIZE] = {0}, mac_key[CHACHA_KEY_SIZE] = {0};
+    uint8_t nonce[CHACHA_NONCE_SIZE] = {0}, subkey[CHACHA_KEY_SIZE] = {0};
+    uint8_t mac_key[CHACHA_KEY_SIZE] = {0};
     uint8_t iv[CHACHA_IV_SIZE] = {0};
     uint8_t plain[KEX_ENC_LEN] = {0};
 
     memcpy(plain, pub, ASFT_X448_KEY_LEN);
 
-    if (RAND_bytes(pkt->random_nonce, sizeof(pkt->random_nonce)) != 1)
+    if (RAND_bytes(pkt->xnonce, sizeof(pkt->xnonce)) != 1)
         goto error;
-    if (kex_packet_keys(enc_key, mac_key, ctx, dir, pkt->random_nonce))
+    if (kex_packet_keys(nonce, subkey, mac_key, ctx, dir, pkt->xnonce))
         goto error;
-    chacha20_iv_nonce(iv, pkt->random_nonce);
-    if (chacha20(pkt->X448_pubkey, plain, sizeof(plain), enc_key, iv))
+    chacha20_iv_nonce(iv, nonce);
+    if (chacha20(pkt->X448_pubkey, plain, sizeof(plain), subkey, iv))
         goto error;
     if (blake2s_mac(pkt->tag, sizeof(pkt->tag), mac_key,
-                    pkt->random_nonce, sizeof(pkt->random_nonce) + KEX_ENC_LEN,
+                    pkt->xnonce, sizeof(pkt->xnonce) + KEX_ENC_LEN,
                     ad, ad_len))
         goto error;
 
@@ -854,7 +856,8 @@ static int kex_seal(
 
 error:
 
-    OPENSSL_cleanse(enc_key, sizeof(enc_key));
+    OPENSSL_cleanse(nonce, sizeof(nonce));
+    OPENSSL_cleanse(subkey, sizeof(subkey));
     OPENSSL_cleanse(mac_key, sizeof(mac_key));
     OPENSSL_cleanse(plain, sizeof(plain));
 
@@ -871,14 +874,15 @@ static int kex_open(
     size_t ad_len
 ) {
     int rv = -1;
-    uint8_t enc_key[CHACHA_KEY_SIZE] = {0}, mac_key[CHACHA_KEY_SIZE] = {0};
+    uint8_t nonce[CHACHA_NONCE_SIZE] = {0}, subkey[CHACHA_KEY_SIZE] = {0};
+    uint8_t mac_key[CHACHA_KEY_SIZE] = {0};
     uint8_t iv[CHACHA_IV_SIZE] = {0};
     uint8_t tag[ASFT_KEY_TAG_LEN] = {0};
 
-    if (kex_packet_keys(enc_key, mac_key, ctx, dir, pkt->random_nonce))
+    if (kex_packet_keys(nonce, subkey, mac_key, ctx, dir, pkt->xnonce))
         goto error;
     if (blake2s_mac(tag, sizeof(tag), mac_key,
-                    (uint8_t *) pkt->random_nonce, sizeof(pkt->random_nonce) + KEX_ENC_LEN,
+                    (uint8_t *) pkt->xnonce, sizeof(pkt->xnonce) + KEX_ENC_LEN,
                     ad, ad_len))
         goto error;
 
@@ -887,15 +891,16 @@ static int kex_open(
         goto error;
     }
 
-    chacha20_iv_nonce(iv, pkt->random_nonce);
-    if (chacha20(pub, (uint8_t *) pkt->X448_pubkey, ASFT_X448_KEY_LEN, enc_key, iv))
+    chacha20_iv_nonce(iv, nonce);
+    if (chacha20(pub, (uint8_t *) pkt->X448_pubkey, ASFT_X448_KEY_LEN, subkey, iv))
         goto error;
 
     rv = 0;
 
 error:
 
-    OPENSSL_cleanse(enc_key, sizeof(enc_key));
+    OPENSSL_cleanse(nonce, sizeof(nonce));
+    OPENSSL_cleanse(subkey, sizeof(subkey));
     OPENSSL_cleanse(mac_key, sizeof(mac_key));
     OPENSSL_cleanse(tag, sizeof(tag));
 
@@ -923,9 +928,9 @@ static int kex_derive_session_key(
     uint8_t out[SESSION_KEY_SIZE],
     EVP_PKEY *pkey,
     const uint8_t peer_pub[ASFT_X448_KEY_LEN],
-    const uint8_t *req_nonce,
+    const uint8_t *req_xnonce,
     const uint8_t *req_pub,
-    const uint8_t *resp_nonce,
+    const uint8_t *resp_xnonce,
     const uint8_t *resp_pub
 ) {
     int rv = 1;
@@ -933,7 +938,7 @@ static int kex_derive_session_key(
     EVP_PKEY_CTX *pctx = NULL;
     uint8_t shared[ASFT_X448_KEY_LEN] = {0};
     size_t shared_len = sizeof(shared);
-    uint8_t transcript[2 * (ASFT_KEY_NONCE_LEN + ASFT_X448_KEY_LEN)];
+    uint8_t transcript[2 * (ASFT_KEY_XNONCE_LEN + ASFT_X448_KEY_LEN)];
     uint8_t *t = transcript;
 
     peer = EVP_PKEY_new_raw_public_key(EVP_PKEY_X448, NULL, peer_pub, ASFT_X448_KEY_LEN);
@@ -951,9 +956,9 @@ static int kex_derive_session_key(
         shared_len != sizeof(shared))
         goto error;
 
-    memcpy(t, req_nonce, ASFT_KEY_NONCE_LEN);   t += ASFT_KEY_NONCE_LEN;
-    memcpy(t, req_pub, ASFT_X448_KEY_LEN);      t += ASFT_X448_KEY_LEN;
-    memcpy(t, resp_nonce, ASFT_KEY_NONCE_LEN);  t += ASFT_KEY_NONCE_LEN;
+    memcpy(t, req_xnonce, ASFT_KEY_XNONCE_LEN);   t += ASFT_KEY_XNONCE_LEN;
+    memcpy(t, req_pub, ASFT_X448_KEY_LEN);        t += ASFT_X448_KEY_LEN;
+    memcpy(t, resp_xnonce, ASFT_KEY_XNONCE_LEN);  t += ASFT_KEY_XNONCE_LEN;
     memcpy(t, resp_pub, ASFT_X448_KEY_LEN);
 
     if (HKDF(out, SESSION_KEY_SIZE, shared, sizeof(shared),
@@ -1029,7 +1034,7 @@ int asft_crypto_kex_request(struct asft_crypto_ctx *ctx, asft_key_pkt *req)
 
     ctx->kex_pkey = pkey;
     memcpy(ctx->kex_pub, pub, sizeof(pub));
-    memcpy(ctx->kex_nonce, req->random_nonce, sizeof(ctx->kex_nonce));
+    memcpy(ctx->kex_xnonce, req->xnonce, sizeof(ctx->kex_xnonce));
 
     return 0;
 }
@@ -1048,8 +1053,8 @@ int asft_crypto_kex_accept(struct asft_crypto_ctx *ctx, const asft_key_pkt *resp
         goto error;
 
     if (kex_derive_session_key(key, ctx->kex_pkey, resp_pub,
-                               ctx->kex_nonce, ctx->kex_pub,
-                               resp->random_nonce, resp_pub)) {
+                               ctx->kex_xnonce, ctx->kex_pub,
+                               resp->xnonce, resp_pub)) {
         asft_error("Cannot derive session key\n");
         goto error;
     }
@@ -1096,8 +1101,8 @@ int asft_crypto_kex_respond(struct asft_crypto_ctx *ctx, asft_key_pkt *resp, con
     }
 
     if (kex_derive_session_key(key, pkey, req_pub,
-                               req->random_nonce, req_pub,
-                               resp->random_nonce, pub)) {
+                               req->xnonce, req_pub,
+                               resp->xnonce, pub)) {
         asft_error("Cannot derive session key\n");
         goto error;
     }
