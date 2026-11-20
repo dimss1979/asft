@@ -12,10 +12,20 @@
 #include "asft.h"
 
 #define CHACHA_KEY_SIZE 32
-#define CHACHA_CTR_SIZE 16
+#define CHACHA_IV_SIZE  16
 
-/* The packet counter is the only nonce byte (inside the ChaCha20 96-bit nonce) */
+/*
+ * OpenSSL's ChaCha20 IV is 128 bits: a 64-bit little-endian block counter
+ * followed by a 64-bit nonce. Our nonce therefore cannot be longer than
+ * 8 bytes, and it starts at byte 8 of the IV.
+ */
+#define CHACHA_NONCE_SIZE 8
+#define CHACHA_NONCE_OFFSET 8
+
+/* The packet counter is the only nonce byte (inside the ChaCha20 64-bit nonce) */
 #define COUNTER_MAX      255
+
+_Static_assert(ASFT_KEY_NONCE_LEN == CHACHA_NONCE_SIZE, "key exchange nonce must fit the ChaCha20 nonce");
 
 #define SESSION_KEY_SIZE 32
 #define KEX_CANDIDATES   10
@@ -127,6 +137,21 @@ error:
         EVP_KDF_free(kdf);
 
     return rv;
+}
+
+/*
+ * Build a ChaCha20 IV with the packet counter in the nonce area. The 64-bit
+ * block counter stays zero and OpenSSL advances it for every 64-byte block.
+ */
+static void chacha20_iv_counter(unsigned char iv[CHACHA_IV_SIZE], uint8_t counter)
+{
+    iv[CHACHA_NONCE_OFFSET] = counter;
+}
+
+/* Build a ChaCha20 IV from an 8-byte random nonce. */
+static void chacha20_iv_nonce(unsigned char iv[CHACHA_IV_SIZE], const uint8_t nonce[CHACHA_NONCE_SIZE])
+{
+    memcpy(iv + CHACHA_NONCE_OFFSET, nonce, CHACHA_NONCE_SIZE);
 }
 
 static int chacha20(
@@ -528,7 +553,8 @@ bool asft_crypto_session_exhausted(struct asft_crypto_ctx *ctx)
  * Wire layout is tag | wire counter | flags | data, where the wire counter is
  * the counter passed through a keyed permutation (see derive_ctr_perm), with
  * a different permutation for each direction. flags and data are encrypted
- * with ChaCha20 (nonce = real counter), then the tag is the BLAKE2s-MAC over
+ * with ChaCha20 (nonce = real counter, in the 64-bit nonce area of the IV;
+ * the 64-bit block counter stays zero), then the tag is the BLAKE2s-MAC over
  * counter and the ciphertext, truncated to ASFT_TAG_LEN. Keys are per session
  * and per direction. A response reuses the counter of the request it answers.
  */
@@ -542,13 +568,13 @@ static int pkt_seal(
     asft_pkt *pkt,
     size_t pkt_len
 ) {
-    unsigned char iv[CHACHA_CTR_SIZE] = {0};
+    unsigned char iv[CHACHA_IV_SIZE] = {0};
 
     if (!ctx->session_valid || pkt_len <= PKT_BODY_OFFSET)
         return 1;
 
     cpkt->counter = ctx->ctr_fwd[dir][ctx->counter];
-    iv[4] = ctx->counter;
+    chacha20_iv_counter(iv, ctx->counter);
 
     if (chacha20(&cpkt->flags, &pkt->flags, pkt_len - PKT_BODY_OFFSET, ctx->pkt_enc_key[dir], iv))
         return 1;
@@ -582,9 +608,9 @@ static int pkt_decrypt(
     size_t cpkt_len,
     uint8_t counter
 ) {
-    unsigned char iv[CHACHA_CTR_SIZE] = {0};
+    unsigned char iv[CHACHA_IV_SIZE] = {0};
 
-    iv[4] = counter;
+    chacha20_iv_counter(iv, counter);
 
     return chacha20(&pkt->flags, &cpkt->flags, cpkt_len - PKT_BODY_OFFSET, ctx->pkt_enc_key[dir], iv);
 }
@@ -757,12 +783,13 @@ int asft_verify_msg_hdr(
 /*
  * Session key exchange.
  *
- * Both packets carry a fresh random nonce and an ephemeral X448 public key
- * (the rest of the packet is zero padding). They are protected with
+ * Both packets carry a fresh 8-byte random nonce and an ephemeral X448 public
+ * key (the rest of the packet is zero padding). They are protected with
  * encrypt-then-MAC: ChaCha20 and BLAKE2s-MAC keys come from HKDF over the
  * per-direction key exchange key (derived from the peer key) salted with the
- * packet nonce, so only a holder of the peer key can build or read them. The
- * response MAC also covers the request public key, binding it to the request.
+ * packet nonce, and ChaCha20 uses the same nonce as its 64-bit nonce, so only
+ * a holder of the peer key can build or read them. The response MAC also
+ * covers the request public key, binding it to the request.
  *
  * The session key is HKDF over the X448 shared secret, salted with both
  * nonces and public keys.
@@ -806,7 +833,7 @@ static int kex_seal(
 ) {
     int rv = 1;
     uint8_t enc_key[CHACHA_KEY_SIZE] = {0}, mac_key[CHACHA_KEY_SIZE] = {0};
-    uint8_t iv[CHACHA_CTR_SIZE] = {0};
+    uint8_t iv[CHACHA_IV_SIZE] = {0};
     uint8_t plain[KEX_ENC_LEN] = {0};
 
     memcpy(plain, pub, ASFT_X448_KEY_LEN);
@@ -815,6 +842,7 @@ static int kex_seal(
         goto error;
     if (kex_packet_keys(enc_key, mac_key, ctx, dir, pkt->random_nonce))
         goto error;
+    chacha20_iv_nonce(iv, pkt->random_nonce);
     if (chacha20(pkt->X448_pubkey, plain, sizeof(plain), enc_key, iv))
         goto error;
     if (blake2s_mac(pkt->tag, sizeof(pkt->tag), mac_key,
@@ -844,7 +872,7 @@ static int kex_open(
 ) {
     int rv = -1;
     uint8_t enc_key[CHACHA_KEY_SIZE] = {0}, mac_key[CHACHA_KEY_SIZE] = {0};
-    uint8_t iv[CHACHA_CTR_SIZE] = {0};
+    uint8_t iv[CHACHA_IV_SIZE] = {0};
     uint8_t tag[ASFT_KEY_TAG_LEN] = {0};
 
     if (kex_packet_keys(enc_key, mac_key, ctx, dir, pkt->random_nonce))
@@ -859,6 +887,7 @@ static int kex_open(
         goto error;
     }
 
+    chacha20_iv_nonce(iv, pkt->random_nonce);
     if (chacha20(pub, (uint8_t *) pkt->X448_pubkey, ASFT_X448_KEY_LEN, enc_key, iv))
         goto error;
 

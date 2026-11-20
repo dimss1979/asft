@@ -340,7 +340,7 @@ Each packet is sent in a 3-byte frame (a COBS byte and two delimiters), so frame
 
 Packets are protected with a session key, which the gateway and the node establish by an X448 key exchange:
 
-1. The gateway sends an ephemeral X448 public key and a random nonce.
+1. The gateway sends an ephemeral X448 public key and an 8-byte random nonce.
 2. The node answers with its own ephemeral public key and nonce.
 3. Both sides derive the session key from the X448 shared secret, both public keys and both nonces.
 
@@ -355,7 +355,9 @@ The gateway starts an exchange whenever it has no session key for a node, and ri
 Data packets use encrypt-then-MAC. Flags and data are encrypted with ChaCha20, and the tag is a truncated BLAKE2s MAC over the counter and the ciphertext.
 Encryption and MAC keys are derived from the session key, separately for each direction.
 
-The counter is the nonce. It starts at 1 in each session and grows with every request, including retransmissions.
+The counter is the nonce. ChaCha20 takes a 128-bit IV: a 64-bit block counter followed by a 64-bit nonce.
+The block counter is left at zero, and the packet counter is placed in the 64-bit nonce area.
+It starts at 1 in each session and grows with every request, including retransmissions.
 The node accepts only counters higher than the last one it accepted, which prevents replay.
 After 255 packets the gateway discards the session key and runs a new key exchange.
 

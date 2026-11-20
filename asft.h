@@ -35,7 +35,11 @@ typedef struct _asft_pkt {
  * key for the response). Both are keyed from the peer key and random_nonce.
  */
 #define ASFT_KEY_TAG_LEN    16
-#define ASFT_KEY_NONCE_LEN  12
+/*
+ * ChaCha20 uses a 128-bit IV made of a 64-bit block counter followed by a
+ * 64-bit nonce, so the key exchange nonce is 8 bytes.
+ */
+#define ASFT_KEY_NONCE_LEN  8
 #define ASFT_X448_KEY_LEN   56
 #define ASFT_KEY_PKT_PAD \
     (sizeof(asft_pkt) - ASFT_KEY_TAG_LEN - ASFT_KEY_NONCE_LEN - ASFT_X448_KEY_LEN)
