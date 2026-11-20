@@ -26,6 +26,7 @@
 #define COUNTER_MAX      255
 
 #define SESSION_KEY_SIZE 32
+#define SESSION_ID_LEN   8
 
 /*
  * Number of session keys the node keeps as candidates until an authenticated
@@ -949,6 +950,7 @@ static EVP_PKEY *kex_keygen(uint8_t pub[ASFT_X448_KEY_LEN])
 /* Derive the session key from our private key and the other side's public key. */
 static int kex_derive_session_key(
     uint8_t out[SESSION_KEY_SIZE],
+    uint8_t session_id[SESSION_ID_LEN],
     EVP_PKEY *pkey,
     const uint8_t peer_pub[ASFT_X448_KEY_LEN],
     const uint8_t *req_xnonce,
@@ -962,6 +964,7 @@ static int kex_derive_session_key(
     uint8_t shared[ASFT_X448_KEY_LEN] = {0};
     size_t shared_len = sizeof(shared);
     uint8_t transcript[2 * (ASFT_KEY_XNONCE_LEN + ASFT_X448_KEY_LEN)];
+    uint8_t hash[CHACHA_KEY_SIZE] = {0};
     uint8_t *t = transcript;
 
     peer = EVP_PKEY_new_raw_public_key(EVP_PKEY_X448, NULL, peer_pub, ASFT_X448_KEY_LEN);
@@ -988,10 +991,21 @@ static int kex_derive_session_key(
              transcript, sizeof(transcript), "asft-session-key"))
         goto error;
 
+    /*
+     * Session identifier for debug logs only: a short hash of the public
+     * transcript. Both ends derive the same value for the same exchange, but
+     * it is not derived from the session key and reveals nothing secret.
+     */
+    if (EVP_Q_digest(NULL, "BLAKE2S-256", NULL, transcript, sizeof(transcript), hash, NULL) != 1)
+        goto error;
+    memcpy(session_id, hash, SESSION_ID_LEN);
+
     rv = 0;
 
 error:
 
+    OPENSSL_cleanse(hash, sizeof(hash));
+    OPENSSL_cleanse(transcript, sizeof(transcript));
     OPENSSL_cleanse(shared, sizeof(shared));
     if (pctx)
         EVP_PKEY_CTX_free(pctx);
@@ -999,23 +1013,6 @@ error:
         EVP_PKEY_free(peer);
 
     return rv;
-}
-
-/* Log a hash of the session key, so that both ends can be compared without exposing the key */
-static void debug_dump_key_hash(const uint8_t key[SESSION_KEY_SIZE], char *desc)
-{
-    uint8_t hash[32] = {0};
-
-    if (EVP_Q_digest(NULL, "BLAKE2S-256", NULL, key, SESSION_KEY_SIZE, hash, NULL) != 1) {
-        asft_error("Cannot hash session key\n");
-        goto error;
-    }
-
-    asft_debug_dump(hash, sizeof(hash), desc);
-
-error:
-
-    OPENSSL_cleanse(hash, sizeof(hash));
 }
 
 static void kex_clear_pending(struct asft_crypto_ctx *ctx)
@@ -1066,6 +1063,7 @@ int asft_crypto_kex_accept(struct asft_crypto_ctx *ctx, const asft_key_pkt *resp
 {
     uint8_t resp_pub[ASFT_X448_KEY_LEN] = {0};
     uint8_t key[SESSION_KEY_SIZE] = {0};
+    uint8_t session_id[SESSION_ID_LEN] = {0};
     uint8_t ad[ASFT_KEY_XNONCE_LEN + ASFT_X448_KEY_LEN] = {0};
     int rv = 1;
 
@@ -1078,14 +1076,14 @@ int asft_crypto_kex_accept(struct asft_crypto_ctx *ctx, const asft_key_pkt *resp
     if (kex_open(ctx, ASFT_MSG_DIR_RESPONSE, resp_pub, resp, ad, sizeof(ad)))
         goto error;
 
-    if (kex_derive_session_key(key, ctx->kex_pkey, resp_pub,
+    if (kex_derive_session_key(key, session_id, ctx->kex_pkey, resp_pub,
                                ctx->kex_xnonce, ctx->kex_pub,
                                resp->xnonce, resp_pub)) {
         asft_error("Cannot derive session key\n");
         goto error;
     }
 
-    debug_dump_key_hash(key, "Session key hash (gateway)");
+    asft_debug_dump(session_id, sizeof(session_id), "Session id (gateway)");
     if (session_set(ctx, key)) {
         asft_error("Cannot set session key\n");
         goto error;
@@ -1097,6 +1095,7 @@ int asft_crypto_kex_accept(struct asft_crypto_ctx *ctx, const asft_key_pkt *resp
 error:
 
     OPENSSL_cleanse(ad, sizeof(ad));
+    OPENSSL_cleanse(session_id, sizeof(session_id));
     OPENSSL_cleanse(key, sizeof(key));
 
     return rv;
@@ -1107,6 +1106,7 @@ int asft_crypto_kex_respond(struct asft_crypto_ctx *ctx, asft_key_pkt *resp, con
     uint8_t req_pub[ASFT_X448_KEY_LEN] = {0};
     uint8_t pub[ASFT_X448_KEY_LEN] = {0};
     uint8_t key[SESSION_KEY_SIZE] = {0};
+    uint8_t session_id[SESSION_ID_LEN] = {0};
     uint8_t ad[ASFT_KEY_XNONCE_LEN + ASFT_X448_KEY_LEN] = {0};
     EVP_PKEY *pkey = NULL;
     int rv;
@@ -1131,14 +1131,14 @@ int asft_crypto_kex_respond(struct asft_crypto_ctx *ctx, asft_key_pkt *resp, con
         goto error;
     }
 
-    if (kex_derive_session_key(key, pkey, req_pub,
+    if (kex_derive_session_key(key, session_id, pkey, req_pub,
                                req->xnonce, req_pub,
                                resp->xnonce, pub)) {
         asft_error("Cannot derive session key\n");
         goto error;
     }
 
-    debug_dump_key_hash(key, "Session key hash (node)");
+    asft_debug_dump(session_id, sizeof(session_id), "Session id (node)");
 
     /* Kept as a candidate until the gateway proves it holds the same key; oldest entry is overwritten */
     memcpy(ctx->candidate_key[ctx->candidate_idx], key, sizeof(key));
@@ -1151,6 +1151,7 @@ int asft_crypto_kex_respond(struct asft_crypto_ctx *ctx, asft_key_pkt *resp, con
 error:
 
     OPENSSL_cleanse(ad, sizeof(ad));
+    OPENSSL_cleanse(session_id, sizeof(session_id));
     OPENSSL_cleanse(key, sizeof(key));
     if (pkey)
         EVP_PKEY_free(pkey);

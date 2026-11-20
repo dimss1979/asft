@@ -7,7 +7,7 @@
 # Sample configuration for node02
 #
 
-debug 1
+debug 0
 mode node
 # Must match the gateway. Generate with: ./asft -g
 network_id NETWORK_KEY

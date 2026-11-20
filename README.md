@@ -89,7 +89,7 @@ The configuration is rejected if any of these is violated.
 Gateway (`gateway.conf`):
 
 ```
-debug 1
+debug 0
 mode gateway
 network_id NETWORK_KEY
 port /dev/ttyUSB0 1200
@@ -104,7 +104,7 @@ node node01 NODE01_KEY
 Node (`node01.conf`):
 
 ```
-debug 1
+debug 0
 mode node
 network_id NETWORK_KEY
 port /dev/ttyUSB1 1200
@@ -112,6 +112,8 @@ gateway gw NODE01_KEY
 ```
 
 Replace the placeholders with keys from `./asft -g`. The placeholders are not valid keys and are rejected.
+
+Debug logging is intended for troubleshooting and should stay `debug 0` in normal operation. When enabled, each successful key exchange logs a short session ID derived from the public key-exchange transcript (both nonces and both public keys), so the gateway and node logs can be correlated. The ID is not derived from the session key and does not expose key material.
 
 * `NETWORK_KEY` is the same in every file.
 * `NODE01_KEY` is the same in the gateway's `node node01` line and in node01's `gateway` line.
