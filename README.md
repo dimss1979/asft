@@ -346,7 +346,7 @@ Packets are protected with a session key, which the gateway and the node establi
 
 The xnonce is expanded with the per-direction key exchange key through HKDF into the 64-bit ChaCha20 nonce, the ChaCha20 subkey, and the MAC key.
 Both messages are encrypted and authenticated with those keys, so only a holder of the link key can take part.
-The response is bound to the request it answers.
+The response is bound to the request it answers through the request xnonce and public key.
 The node does not trust a new session key until the first data packet protected with it arrives.
 
 The gateway starts an exchange whenever it has no session key for a node, and right after a successful exchange it sends that node its first data packet.

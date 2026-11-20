@@ -31,10 +31,10 @@ typedef struct _asft_pkt {
 /*
  * Key exchange packet, the same length as a full data packet so that it
  * cannot be told apart by size. Everything after xnonce is encrypted.
- * tag is a MAC over xnonce and the ciphertext (plus the request public key
- * for the response). The 128-bit xnonce and the per-direction key exchange
- * key are expanded with HKDF into the ChaCha20 nonce, ChaCha20 subkey, and
- * MAC key.
+ * tag is a MAC over xnonce and the ciphertext (plus the request xnonce and
+ * public key for the response). The 128-bit xnonce and the per-direction key
+ * exchange key are expanded with HKDF into the ChaCha20 nonce, ChaCha20
+ * subkey, and MAC key.
  */
 #define ASFT_KEY_TAG_LEN    16
 #define ASFT_KEY_XNONCE_LEN 16

@@ -811,7 +811,7 @@ int asft_verify_msg_hdr(
  * (derived from the peer key) salted with the xnonce yields the 64-bit
  * ChaCha20 nonce, the 256-bit ChaCha20 subkey, and the BLAKE2s-MAC key, so
  * only a holder of the peer key can build or read them. The response MAC
- * also covers the request public key, binding it to the request.
+ * also covers the request xnonce and public key, binding it to the request.
  *
  * The session key is HKDF over the X448 shared secret, salted with both
  * xnonces and public keys.
@@ -1066,13 +1066,16 @@ int asft_crypto_kex_accept(struct asft_crypto_ctx *ctx, const asft_key_pkt *resp
 {
     uint8_t resp_pub[ASFT_X448_KEY_LEN] = {0};
     uint8_t key[SESSION_KEY_SIZE] = {0};
+    uint8_t ad[ASFT_KEY_XNONCE_LEN + ASFT_X448_KEY_LEN] = {0};
     int rv = 1;
 
     if (!ctx->kex_pkey)
         goto error;
 
-    /* The response is bound to our request through its public key */
-    if (kex_open(ctx, ASFT_MSG_DIR_RESPONSE, resp_pub, resp, ctx->kex_pub, sizeof(ctx->kex_pub)))
+    /* The response is bound to the whole request: xnonce and public key */
+    memcpy(ad, ctx->kex_xnonce, sizeof(ctx->kex_xnonce));
+    memcpy(ad + ASFT_KEY_XNONCE_LEN, ctx->kex_pub, sizeof(ctx->kex_pub));
+    if (kex_open(ctx, ASFT_MSG_DIR_RESPONSE, resp_pub, resp, ad, sizeof(ad)))
         goto error;
 
     if (kex_derive_session_key(key, ctx->kex_pkey, resp_pub,
@@ -1093,6 +1096,7 @@ int asft_crypto_kex_accept(struct asft_crypto_ctx *ctx, const asft_key_pkt *resp
 
 error:
 
+    OPENSSL_cleanse(ad, sizeof(ad));
     OPENSSL_cleanse(key, sizeof(key));
 
     return rv;
@@ -1103,6 +1107,7 @@ int asft_crypto_kex_respond(struct asft_crypto_ctx *ctx, asft_key_pkt *resp, con
     uint8_t req_pub[ASFT_X448_KEY_LEN] = {0};
     uint8_t pub[ASFT_X448_KEY_LEN] = {0};
     uint8_t key[SESSION_KEY_SIZE] = {0};
+    uint8_t ad[ASFT_KEY_XNONCE_LEN + ASFT_X448_KEY_LEN] = {0};
     EVP_PKEY *pkey = NULL;
     int rv;
 
@@ -1118,7 +1123,10 @@ int asft_crypto_kex_respond(struct asft_crypto_ctx *ctx, asft_key_pkt *resp, con
         goto error;
     }
 
-    if (kex_seal(ctx, ASFT_MSG_DIR_RESPONSE, resp, pub, req_pub, sizeof(req_pub))) {
+    /* The response is bound to the whole request: xnonce and public key */
+    memcpy(ad, req->xnonce, sizeof(req->xnonce));
+    memcpy(ad + ASFT_KEY_XNONCE_LEN, req_pub, sizeof(req_pub));
+    if (kex_seal(ctx, ASFT_MSG_DIR_RESPONSE, resp, pub, ad, sizeof(ad))) {
         asft_error("Cannot build key exchange response\n");
         goto error;
     }
@@ -1142,6 +1150,7 @@ int asft_crypto_kex_respond(struct asft_crypto_ctx *ctx, asft_key_pkt *resp, con
 
 error:
 
+    OPENSSL_cleanse(ad, sizeof(ad));
     OPENSSL_cleanse(key, sizeof(key));
     if (pkey)
         EVP_PKEY_free(pkey);
