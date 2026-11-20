@@ -69,7 +69,6 @@ struct asft_crypto_ctx {
      * overwrites the oldest entry, until a packet confirms one of them.
      */
     bool session_valid;
-    uint8_t session_key[SESSION_KEY_SIZE];
     uint8_t pkt_enc_key[ASFT_MSG_DIR_COUNT][CHACHA_KEY_SIZE];
     uint8_t pkt_mac_key[ASFT_MSG_DIR_COUNT][CHACHA_KEY_SIZE];
     /* Wire representation of the counter: keyed permutation of byte values and its inverse */
@@ -545,7 +544,6 @@ static int session_set(struct asft_crypto_ctx *ctx, const uint8_t key[SESSION_KE
             goto error;
     }
 
-    memcpy(ctx->session_key, key, SESSION_KEY_SIZE);
     memcpy(ctx->pkt_enc_key, enc, sizeof(enc));
     memcpy(ctx->pkt_mac_key, mac, sizeof(mac));
     memcpy(ctx->ctr_fwd, fwd, sizeof(fwd));
