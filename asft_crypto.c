@@ -28,6 +28,9 @@
 #define SESSION_KEY_SIZE 32
 #define SESSION_ID_LEN   8
 
+/* See ASFT_COUNTER_RETRY_MAX in asft.h: the gateway's first attempt plus its
+ * retries bound how far a node's accepted packet counter can advance. */
+
 /*
  * Number of session keys the node keeps as candidates until an authenticated
  * data packet proves which one the gateway is using (see candidate_key and
@@ -659,12 +662,17 @@ int asft_decrypt_req(
 ) {
     bool verified = ctx->session_valid &&
         !pkt_verify(ctx->pkt_mac_key[ASFT_MSG_DIR_REQUEST], cpkt, cpkt_len);
+    bool adopted = false;
+    uint8_t adopted_counter = 0;
 
     /* Otherwise the packet may be the first one under a candidate key, newest first */
     for (size_t k = 0; !verified && k < ctx->candidate_cnt; k++) {
         size_t i = (ctx->candidate_idx + KEX_CANDIDATES - 1 - k) % KEX_CANDIDATES;
         uint8_t mac_key[CHACHA_KEY_SIZE] = {0};
+        uint8_t fwd[256] = {0};
+        uint8_t inv[256] = {0};
         int rv = derive_pkt_key(mac_key, ctx->candidate_key[i], pkt_mac_info[ASFT_MSG_DIR_REQUEST]);
+        uint8_t counter;
 
         if (!rv)
             rv = pkt_verify(mac_key, cpkt, cpkt_len);
@@ -672,8 +680,29 @@ int asft_decrypt_req(
         if (rv)
             continue;
 
+        /* Decode the counter under the candidate before committing to the key. */
+        if (derive_ctr_perm(fwd, inv, ctx->candidate_key[i], ctr_perm_info[ASFT_MSG_DIR_REQUEST])) {
+            OPENSSL_cleanse(fwd, sizeof(fwd));
+            OPENSSL_cleanse(inv, sizeof(inv));
+            continue;
+        }
+        counter = inv[cpkt->counter];
+        OPENSSL_cleanse(fwd, sizeof(fwd));
+        OPENSSL_cleanse(inv, sizeof(inv));
+
+        /*
+         * A replacement session legitimately starts at a small counter. A
+         * higher counter must not replace a live session, otherwise a captured
+         * packet under a resident candidate could reset the replay floor.
+         */
+        if (ctx->session_valid && ctx->counter > 0 &&
+            counter > ASFT_COUNTER_RETRY_MAX && counter <= ctx->counter)
+            continue;
+
         if (session_set(ctx, ctx->candidate_key[i]))
             return 1;
+        adopted = true;
+        adopted_counter = counter;
         asft_debug("Session key established\n");
         OPENSSL_cleanse(ctx->candidate_key, sizeof(ctx->candidate_key));
         ctx->candidate_idx = 0;
@@ -684,9 +713,11 @@ int asft_decrypt_req(
     if (!verified)
         return 1;
 
-    uint8_t counter = ctx->ctr_inv[ASFT_MSG_DIR_REQUEST][cpkt->counter];
+    uint8_t counter = adopted ? adopted_counter :
+        ctx->ctr_inv[ASFT_MSG_DIR_REQUEST][cpkt->counter];
 
-    if (counter <= ctx->counter) {
+    if (counter <= ctx->counter ||
+        (unsigned int) counter > (unsigned int) ctx->counter + ASFT_COUNTER_RETRY_MAX) {
         asft_error("Replay detected\n");
         return 1;
     }

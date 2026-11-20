@@ -21,6 +21,15 @@
 #define ASFT_MSG_MAC_LEN 8
 #define ASFT_BLOCK_LEN  100
 
+/*
+ * The gateway retries an unanswered request this many times before clearing
+ * the session. The first attempt plus those retries is the maximum number of
+ * packet counters a node can miss before a rekey, so the node bounds accepted
+ * counter jumps by ASFT_COUNTER_RETRY_MAX (see asft_decrypt_req()).
+ */
+#define ASFT_MAX_NO_RESPONSE   3
+#define ASFT_COUNTER_RETRY_MAX (ASFT_MAX_NO_RESPONSE + 1)
+
 typedef struct _asft_pkt {
     uint8_t tag[ASFT_TAG_LEN];
     uint8_t counter; /* obfuscated nonce, see asft_crypto.c */

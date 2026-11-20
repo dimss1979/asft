@@ -346,8 +346,9 @@ int asft_gateway_loop(void)
         if (!got_response) {
             asft_debug("No response\n");
             n->no_response_count++;
-            if (n->no_response_count > 3) {
-                asft_debug("Node '%s' has not responded for 3 consecutive times, clearing session key\n", n->label);
+            if (n->no_response_count > ASFT_MAX_NO_RESPONSE) {
+                asft_debug("Node '%s' has not responded for %u consecutive times, clearing session key\n",
+                           n->label, ASFT_MAX_NO_RESPONSE + 1);
                 n->session_key_established = false;
             }
         } else {
